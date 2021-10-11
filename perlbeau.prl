@@ -1,0 +1,29 @@
+#
+# Perl beautifier by Thomas Tensi, 7/96
+#
+my $last_line_was_empty=0;
+
+while ($line=<STDIN>) {
+  $line =~ s/\r?\n//;
+  $line=~ s/^\s*//;     # remove leading white space
+
+  if ($line=~ /^\s*$/) {
+    if (!$last_line_was_empty) {
+      print "\n";
+    }
+    $last_line_was_empty=1;
+  } else {
+    $last_line_was_empty=0;
+    if ($line=~ /^}/) {
+      $indentationlevel--;
+    }
+    foreach $i (1..2*$indentationlevel) {
+      print " ";
+    };
+    print $line."\n";
+    if ($line=~ /{\s*#/ || $line=~ /{\s*$/) {
+      $indentationlevel++;
+    }
+  }
+}
+  

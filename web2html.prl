@@ -1,0 +1,663 @@
+
+use strict;
+use English;
+my  $TRUE=1;
+my  $FALSE=0;
+
+my  $banner_line="web2html Version 1.0, August 1997";
+
+my  $WEB_escape_char="#";
+
+my  $debugging_is_active=$FALSE;
+
+my  $in_comment=1;
+my  $at_first_match_line=2;
+my  $in_match_text=3;
+my  $in_replacement_text=4;
+my  $after_replacement_text=5;
+
+my  %expected_state=(
+"x" => $in_comment,
+"y" => $in_match_text,
+"z" => $in_replacement_text);
+my  %next_state=(
+"x" => $at_first_match_line,
+"y" => $in_replacement_text,
+"z" => $after_replacement_text);
+
+my  %HTML_FSA = (
+"start" =>
+{ "c"=>"ERROR/", "d"=>"ERROR/", "e"=>"start/", "i"=>"ERROR/",
+"l"=>"ERROR/", "n"=>"ERROR/", "t"=>"in_text_normal/P#" },
+"in_text_normal" =>
+{ "c"=>"in_code/p|C|#", "d"=>"in_definition/p|C|#",
+"e"=>"in_text_empty/p|",
+"i"=>"in_text_indented/p|I#", "l"=>"in_text_list/p|U|LP#",
+"n"=>"in_text_normal/#", "t"=>"in_text_normal/p|P#" },
+"in_text_empty" =>
+{ "c"=>"in_code/C|#", "d"=>"in_definition/C|#", "e"=>"in_text_empty/",
+"i"=>"in_text_indented/I#", "l"=>"in_text_list/U|LP#",
+"n"=>"in_text_normal/P#", "t"=>"in_text_normal/P#" },
+"in_text_list" =>
+{ "c"=>"in_code/pl|u|C|#", "d"=>"in_definition/pl|u|C|#",
+"e"=>"in_text_list_empty/", "i"=>"in_text_list/#",
+"l"=>"in_text_list/pl|LP#", "n"=>"in_text_normal/pl|u|P#",
+"t"=>"in_text_normal/pl|u|P#" },
+"in_text_list_empty" =>
+{ "c"=>"in_code/pl|u|C|#", "d"=>"in_definition/pl|u|C|#",
+"e"=>"in_text_list_empty/", "i"=>"in_text_list/p|P#",
+"l"=>"in_text_list/pl|LP#", "n"=>"in_text_normal/pl|u|P#",
+"t"=>"in_text_normal/pl|u|P#" },
+"in_text_indented" =>
+{ "c"=>"in_code/i|C|#", "d"=>"in_definition/i|C|#",
+"e"=>"in_text_empty/i|",
+"i"=>"in_text_indented/#", "l"=>"in_text_list/i|U|LP#",
+"n"=>"in_text_normal/i|P#", "t"=>"in_text_normal/i|P#" },
+"in_definition" =>
+{ "c"=>"in_code/c|C|#", "d"=>"in_definition/#", "e"=>"in_def_empty/",
+"i"=>"in_definition/#", "l"=>"in_definition/#",
+"n"=>"in_definition/#", "t"=>"in_text_normal/c|P#" },
+"in_def_empty" =>
+{ "c"=>"in_code/c|C|#", "d"=>"in_definition/|#", "e"=>"in_def_empty/",
+"i"=>"in_definition/|#", "l"=>"in_definition/|#",
+"n"=>"in_definition/|#", "t"=>"in_text_normal/c|P#" },
+"in_code" =>
+{ "c"=>"ERROR/", "d"=>"ERROR/", "e"=>"in_code_empty/", "i"=>"in_code/#",
+"l"=>"in_code/#", "n"=>"in_code/#", "t"=>"in_text_normal/c|P#" },
+"in_code_empty" =>
+{ "c"=>"ERROR/", "d"=>"ERROR/", "e"=>"in_code_empty/",
+"i"=>"in_code/|#", "l"=>"in_code/|#", "n"=>"in_code/|#",
+"t"=>"in_text_normal/c|P#" }
+);
+
+my  $trace_line_counter;
+my  $trace_delta;
+
+my  $WEB_file_name;
+my  $change_file_name;
+my  @input_line_list;
+my  @output_line_list;
+
+my  %module_name_list;
+
+my  %subroutine_to_module_number_map;
+
+my  %module_to_module_number_map;
+
+my  %FSA_output_to_expanded_output =
+(
+"C"=>"<PRE>", "c"=>"</PRE>", "I"=>"<P>", "i"=>"</P>", "P"=>"<P>",
+"p"=>"</P>", "U"=>"<UL>", "u"=>"</UL>", "L"=>"<LI>", "l"=>"</LI>",
+"|"=>"\n", "#"=>undef,
+);
+
+sub fatal_error {
+  my  $message=shift;
+
+  die("$message\n");
+}
+
+sub warning {
+  my  $message=shift;
+
+  warn("$message\n");
+}
+
+sub trace_start {
+  my  $name=shift;
+  my  $delta=shift;
+
+  print STDERR $name.":       ";
+  $trace_delta = (!defined($delta) ? 100
+  : ( $delta<=0 ? 1 : $delta));
+  $trace_line_counter=0;
+}
+
+sub trace_line {
+  my  $new_counter_value=shift;
+
+  if (defined($new_counter_value)) {
+    $trace_line_counter=$new_counter_value;
+  } else {
+    $trace_line_counter++;
+  }
+  if ($trace_line_counter % $trace_delta == 0 ||
+  defined($new_counter_value)) {
+    printf STDERR "\x8\x8\x8\x8\x8\x8"."%6d", $trace_line_counter;
+  }
+}
+
+sub trace_end {
+  printf STDERR "\x8\x8\x8\x8\x8\x8"."%6d\n", $trace_line_counter;
+}
+
+sub read_file {
+  my  $filename=shift;
+
+  my  $line;
+  local *file_handle;
+
+  {
+    my  $success=open(file_handle, $filename);
+    if (!$success) {
+      fatal_error("web2perl: cannot open $filename: $!");
+    } #endif
+  }
+  while ($line=<file_handle>) {
+    $line=~s/\r?\n$//;
+    if ($line !~ "^[$WEB_escape_char]i\s*(.*)") {
+      push(@input_line_list, $line);
+    } else {  ## include file
+      my  $include_file_name=$1;
+      read_file($include_file_name);
+    } #endif
+  } #endwhile
+}
+
+sub module_name_list {
+  return keys(%module_name_list);
+}
+
+sub clear_module_name_list {
+  %module_name_list={};
+}
+
+sub insert_into_module_name_list {
+  my  $module_name=shift;
+
+  $module_name_list{$module_name}="T";
+}
+
+sub lookup_in_module_name_list {
+  my  $module_reference=shift;
+
+  my  $module_name;
+  my  @name_list;
+
+  $module_reference=normalize_module_name($module_reference);
+  if (name_is_abbreviation($module_reference)) {
+    $module_reference =~ s/\.\.\.$//;
+  } #endif
+  @name_list=();
+  for $module_name (module_name_list()) {
+    if (index($module_name, $module_reference)==$[) {
+      push(@name_list, $module_name);
+    } #endif
+  } #endfor
+  return @name_list;
+}
+
+sub name_is_abbreviation {
+  return (shift =~ /\.\.\.$/);
+}
+
+sub normalize_module_name {
+  my  $name=shift;
+
+  $name=~ s/\s+/ /g;  $name =~ s/^\s*//;  $name =~ s/\s*$//;
+  return $name;
+}
+
+sub store_or_lookup_name {
+  my  $module_name = shift;
+
+  if (!name_is_abbreviation($module_name)) {
+    insert_into_module_name_list($module_name);
+  } else {
+    my  @matching_modules;
+    @matching_modules=lookup_in_module_name_list($module_name);
+    if (scalar(@matching_modules)!=1) {
+      no_unique_match_warning($module_name, @matching_modules);
+    } else {
+      $module_name=shift(@matching_modules);
+    } #endif
+  } #endif
+  return $module_name;
+}
+
+sub no_unique_match_warning {
+  my  $module_name = shift;
+  my  @matching_modules = @_;
+
+  if (scalar(@matching_modules)==0) {
+    warning("no match found for: $module_name");
+  } elsif (scalar(@matching_modules)>1) {
+    warning("ambiguous reference: $module_name");
+  } else {
+    fatal_error("Can't happen in ''no_unique_match_warning''");
+  } #endif
+}
+
+sub m2s_clear {
+  %module_to_module_number_map=();
+}
+
+sub m2s_insert {
+  my  $module_name=shift;
+  my  $module_number=shift;
+  my  @modules;
+
+  @modules=(exists($module_to_module_number_map{$module_name}) ? @{ $module_to_module_number_map{$module_name} } : ());
+  push(@modules, $module_number);
+  $module_to_module_number_map{$module_name}=[ @modules ];
+}
+
+sub m2s_give_modules {
+  return sort(keys(%module_to_module_number_map));
+}
+
+sub m2s_give_module_numbers {
+  my  $module_name=shift;
+
+  return (exists($module_to_module_number_map{$module_name}) ? @{ $module_to_module_number_map{$module_name} } : ());
+}
+
+sub m2s_give_definitions {
+  my  $module_name=shift;
+
+  my  @definitions;
+  my  $entry;
+  my  @modules=
+  (exists($module_to_module_number_map{$module_name}) ? @{ $module_to_module_number_map{$module_name} } : ());
+
+  foreach $entry (@modules) {
+    if ($entry<0) {
+      push(@definitions, -$entry);
+    } #endif
+  } #endforeach
+  return @definitions;
+}
+
+sub m2s_give_first_def {
+  my  $module_name=shift;
+  my  @definitions=m2s_give_definitions($module_name);
+
+  if (scalar(@definitions)>0) {
+    return shift(@definitions);
+  } else {
+    return "???";
+  }
+}
+
+sub normalize_for_HTML {
+  my  $line=shift;
+
+  $line =~ s/&/&amp;/g;
+  $line =~ s/</&lt;/g;
+  $line =~ s/>/&gt;/g;
+  return $line;
+}
+
+sub find_hyperlink_string {
+  my  $module_number = shift;
+  my  $linking_text = shift;
+
+  return "<A HREF=\"#"."module_".$module_number."\">".
+  $linking_text."</A>";
+}
+
+sub normalize_text_line {
+  my  $line = shift;
+  my  $tags;
+
+  $line =~ s{\|([^\|]*)\|}{<CODE>$1</CODE>}g;
+  return $line;
+}
+
+{
+  print STDERR "$banner_line\n";
+  if (scalar(@ARGV)==0) {
+    fatal_error("usage: web2perl webfile [changefile]");
+  } else {
+    $WEB_file_name=shift(@ARGV);
+    if (scalar(@ARGV)>0) {
+      $change_file_name=shift(@ARGV);
+    } else {
+      $change_file_name="";
+    }#endif
+  } #endif
+
+  read_file($WEB_file_name);
+
+  if ($change_file_name ne "") {
+    {
+      local *changefile_handle;
+
+      {
+        my  $success=open(changefile_handle, $change_file_name);
+        if (!$success) {
+          fatal_error("web2perl: cannot open change file $change_file_name: $!");
+        } #endif
+      }
+
+      {
+        my  @changed_input_line_list;
+        my  $first_line_number=$[;
+        my  $last_line_number;
+        my  $line;
+        my  @replacement_text;
+        my  $scan_state=$in_comment;
+
+        while ($line=<changefile_handle>) {
+          my  $done;
+
+          $line=~s/\r?\n$//;
+          if ($line =~ "^[$WEB_escape_char]([xyz])") {
+            my  $match_char=$1;
+            {
+              if ($scan_state ne $expected_state{$match_char}) {
+                warning("change file corrupt: unexpected $WEB_escape_char$match_char");
+              } #endif
+              $scan_state=$next_state{$match_char};
+            }
+
+            $done=($scan_state!=$after_replacement_text);
+          } else {
+            $done=$FALSE;
+          } #endif
+          if (!$done) {
+            {
+              switch: for ($scan_state) {
+                ;(/$in_comment/) && do {
+                  ;  last switch;
+                }
+                ;(/$at_first_match_line/) && do {
+                  for (;  $first_line_number<scalar(@input_line_list);
+                  $first_line_number++) {
+                    last if ($input_line_list[$first_line_number] eq $line);
+                  } #endfor
+                  if ($first_line_number>=scalar(@input_line_list)) {
+                    warning("no match found for change file entry: $line");
+                  } #endif
+                  $last_line_number=$first_line_number;	  @replacement_text=();
+                  $scan_state=$in_match_text;  last switch;
+                }
+                ;(/$in_match_text/) && do {
+                  $last_line_number++;
+                  if ($last_line_number>=scalar(@input_line_list) ||
+                  $input_line_list[$last_line_number] ne $line) {
+                    warning("change and master file mismatch: $last_line_number");
+                  } #endif
+                  last switch;
+                }
+                ;(/$in_replacement_text/) && do {
+                  push(@replacement_text, $line);  last switch;
+                }
+                ;(/$after_replacement_text/) && do {
+                  my  $matchlength;
+                  $matchlength=$last_line_number-$first_line_number+1;
+                  splice(@input_line_list, $first_line_number, $matchlength,
+                  @replacement_text);
+                  $scan_state=$in_comment;  last switch;
+                }
+              } #endswitch
+            }
+
+          } #endif
+        } #endwhile
+        if ($scan_state!=$in_comment) {
+          warning("unexpected eof in change file");
+        } #endif
+      }
+
+      close(changefile_handle);
+    }
+
+  } #endif
+  {
+    my  $module_number=0;
+    my  $line;
+    my  $line_number=0;
+    my  $in_text_part=$FALSE;
+
+    trace_start("accumulating defs");
+    m2s_clear();
+    foreach $line (@input_line_list) {
+      trace_line();
+      $line_number++;
+      switch: for ($line) {
+        ;(/^\s*[$WEB_escape_char][ \*]/) && do {
+          $in_text_part=$TRUE;
+          $module_number++;  last switch;
+        }
+        ;(/^\s*[$WEB_escape_char]p/) && do {
+          $in_text_part=$FALSE;  last switch;
+        }
+        ;(/^\s*[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>\s*(=?)$/) && do {
+          my  $module_name;
+          my  $kind_of_use;
+
+          $module_name=normalize_module_name($1);
+          $kind_of_use=($2 eq "=" ? "definition" : "application");
+          if ($in_text_part == ($kind_of_use eq "application")) {
+            warning("$kind_of_use in wrong context (l.$line_number): ".
+            $module_name);
+          } #endif
+          $module_name=store_or_lookup_name($module_name);
+          if ($kind_of_use eq "definition") {
+            m2s_insert($module_name, -$module_number);
+          } else {
+            m2s_insert($module_name, $module_number);
+          }
+          $in_text_part=$FALSE;
+          last switch;
+        }
+        ;(/^\s*sub\s*(\w+)/) && do {
+          my  $subroutine_name=$1;
+
+          if (!$in_text_part) { # check whether this is in code part
+            if (exists($subroutine_to_module_number_map{$subroutine_name})) {
+              warning("double subroutine definition (l.$line_number): ".
+              $subroutine_name);
+            } #endif
+            $subroutine_to_module_number_map{$subroutine_name}=$module_number;
+          } #endif
+        }
+      } #endswitch
+    } #endwhile
+    trace_end();
+  }
+
+  if ($debugging_is_active) {
+    {
+      my  $module_name;
+      my  @modules;
+
+      @modules=m2s_give_modules();
+      for $module_name (@modules) {
+        my  @module_numbers;
+
+        @module_numbers=join(", ", m2s_give_module_numbers($module_name));
+        print("$module_name: @module_numbers\n");
+      } #endfor
+    }
+
+  } #endif
+  {
+    my  $module_number=0;
+    my  $line;
+    my  $state="start";
+
+    trace_start("Putting out HTML",20);
+    push(@output_line_list, "<HTML>");
+    push(@output_line_list, "<HEAD><TITLE>$WEB_file_name</TITLE></HEAD>");
+    push(@output_line_list, "<BODY>");
+    foreach $line (@input_line_list) {
+      my  $input_class;
+      my  $output;
+      trace_line();
+      {
+        switch: for ($line) {
+          ;(/^\s*[$WEB_escape_char]([ \*])/) && do {
+            my  $intro_tag=$1;
+            {
+              my  $is_starred_module=($intro_tag eq "*");
+              my  $line_prefix;
+              my  $anchor;
+
+              $module_number++;
+              if ($is_starred_module) {
+                my  $module_title;
+                $line =~ s/^\s*$WEB_escape_char\*\s*([^\.]*)\.//;
+                $module_title = normalize_text_line($1);
+                $line_prefix="<HR NOSHADE SIZE=4></HR>".
+                "<B>".$module_number.". ".$module_title.".</B>";
+              } else {
+                $line =~ s/^\s*$WEB_escape_char\s+//;
+                $line_prefix="<HR NOSHADE SIZE=1></HR>$module_number. ";
+              } #endif
+              $anchor="<A NAME=\""."module_".$module_number."\"></A>";
+              $line=normalize_text_line($line);
+              $line=$anchor.$line_prefix.$line;
+            }
+
+            $input_class="t";  last switch;
+          }
+          ;(/^\s*[$WEB_escape_char]d/) && do {
+            $input_class="d";
+            $line=normalize_for_HTML($line);
+            last switch;
+          }
+          ;(/^\s*[$WEB_escape_char]p/) && do {
+            $input_class="c";  last switch;
+          }
+          ;(/^\s*[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>\s*=$/) && do {
+            my  $module_name=$1;
+            {
+              my    $def_count;
+              my  @def_module_numbers;
+              my    $position;
+              my      $gt_sym="&gt;&gt;";
+              my      $lt_sym="&lt;&lt;";
+
+              $module_name=normalize_module_name($module_name);
+              $module_name=store_or_lookup_name($module_name);
+              @def_module_numbers=m2s_give_definitions($module_name);
+              $def_count=scalar(@def_module_numbers);
+              for ($position=$[;  $position<$def_count;  $position++) {
+                last if ($def_module_numbers[$position] eq $module_number);
+              }
+              if ($position>$[) {
+                $lt_sym=find_hyperlink_string($def_module_numbers[$position-1],
+                $lt_sym);
+              }
+              if ($position<$def_count+$[-1) {
+                $gt_sym=find_hyperlink_string($def_module_numbers[$position+1],
+                $gt_sym);
+              }
+              $line =~ s{[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>\s*=}
+              {$lt_sym$module_name$gt_sym =};
+            }
+
+            $input_class="c";  last switch;
+          }
+          ;(/[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>/) && do {
+            my  $module_name=$1;
+            {
+              my  $first_def;
+              my  $hyperlink;
+
+              $module_name=normalize_module_name($module_name);
+              $module_name=store_or_lookup_name($module_name);
+
+              $first_def=m2s_give_first_def($module_name);
+              $hyperlink=find_hyperlink_string($first_def,
+              "<SUB>".$first_def."</SUB>");
+              $line =~ s{[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>}
+              {&lt;&lt;$module_name&gt;&gt;$hyperlink};
+            }
+
+            $input_class="n";  last switch;
+          }
+          ;(/^\s*$/) && do {
+            $input_class="e";  last switch;
+          }
+          ;(/.*/) && do {
+            if    ($line =~ /^\s*-/) { $input_class="l"; }
+            elsif ($line =~ /^\s+/)  { $input_class="i"; }
+            else                     { $input_class="n"; }
+            if ($state eq "in_code" || $state eq "in_code_empty" ||
+            $state eq "in_definition" || $state eq "in_def_empty") {
+              {
+                $line=normalize_for_HTML($line);
+                if ($line !~ /^\s*sub\s+\w+/) {
+                  {
+                    my  $subroutine_name;
+
+                    foreach $subroutine_name (keys(%subroutine_to_module_number_map)) {
+                      if ($line =~ /\W$subroutine_name\s*\(/) {
+                        my  $module_number;
+                        my  $hyperlink;
+
+                        $module_number=$subroutine_to_module_number_map{$subroutine_name};
+                        $hyperlink=find_hyperlink_string($module_number,
+                        "<SUB>".$module_number."</SUB>");
+                        $line =~ s{(\W$subroutine_name)(\W)}
+                        {$1$hyperlink$2}g;
+                      } #endif
+                    } #endforeach
+                  }
+
+                } #endif
+              }
+
+            } else {
+              {
+                $line=normalize_text_line($line);
+                $line =~ s/^\s*-\s*//;
+              }
+
+            }
+          }
+        } #endswitch
+      }
+
+      ($state,$output)=split("/", $HTML_FSA{$state}{$input_class});
+      if ($state eq "ERROR") {
+        warning("unexpected part: $line");  $state="start";
+      } #endif
+      {
+        my  $character;
+        my  $expanded_output;
+
+        $FSA_output_to_expanded_output{"#"} = $line;
+        for $character (split("", $output)) {
+          $expanded_output .= $FSA_output_to_expanded_output{$character};
+        } #endfor
+        if ($expanded_output ne "") {
+          push(@output_line_list, $expanded_output);
+        } #endif
+      }
+
+    } #endwhile
+    {
+      my  $module_name;
+      my  @modules;
+
+      push(@output_line_list, "<UL>");
+      @modules=m2s_give_modules();
+      for $module_name (@modules) {
+        my  @module_numbers;
+
+        @module_numbers=m2s_give_module_numbers($module_name);
+        grep { if ($ARG<0) { $ARG="<EM>".-$ARG."</EM>"; }} @module_numbers;
+        $module_name=normalize_text_line(normalize_for_HTML($module_name));
+        push(@output_line_list, "<LI>$module_name: ". join(", ", @module_numbers));
+      } #endfor
+      push(@output_line_list, "</UL>");
+    }
+
+    push(@output_line_list, "</BODY></HTML>");
+    trace_end();
+  }
+
+  {
+    my  $line;
+
+    for $line (@output_line_list) {
+      print $line."\n";
+    } #endfor
+  }
+
+}
+

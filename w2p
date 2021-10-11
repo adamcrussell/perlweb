@@ -1,0 +1,37 @@
+#! /bin/sh
+#  w2p -- filter from PerlWEB to PERL
+#  Two parameters are needed:
+#    1. the name of the PerlWEB file (mandatory)
+#    2. the name of a change file    (optional)
+#  Output goes to STDOUT or some file given by a "-o" option.
+#
+#  The tangling occurs in two steps
+#   - web2perl.prl:	reorders the chunks in the perlweb input
+#   - perlcpp:		expands the macro definitions without #line comments
+#   - perlbeau:		puts correct indentation into the resulting perl file
+
+file_names=;
+outfile=-;
+last_was_o_option=FALSE;
+
+for param in $*; do
+  if [ $param = "-o" ]; then
+    last_was_o_option="TRUE";
+  elif [ $last_was_o_option = "TRUE" ]; then
+    last_was_o_option="FALSE";  
+    outfile="$param";
+  else
+    file_names="$file_names $param";
+  fi
+done
+
+perl web2perl.prl $file_names | \
+/usr/lib/cpp -P | \
+perl perlbeau.prl | \
+if [ $outfile != "-" ]; then
+  cat - >$outfile;
+else
+  cat -;
+fi
+
+

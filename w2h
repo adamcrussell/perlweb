@@ -1,0 +1,32 @@
+#! /bin/sh
+#  w2h -- filter from PerlWEB to HTML
+#  Two parameters are needed:
+#    1. the name of the PerlWEB file (mandatory)
+#    2. the name of a change file    (optional)
+#  Output goes to STDOUT or some file given by a "-o" option.
+#
+#  The weaving consists of one step
+#   - web2html.prl:	expands the PERLWeb file into HTML
+
+file_names=;
+outfile=-;
+last_was_o_option=FALSE;
+
+for param in $*; do
+  if [ $param = "-o" ]; then
+    last_was_o_option="TRUE";
+  elif [ $last_was_o_option = "TRUE" ]; then
+    last_was_o_option="FALSE";  
+    outfile="$param";
+  else
+    file_names="$file_names $param";
+  fi
+done
+
+perl web2html.prl $file_names |\
+if [ $outfile != "-" ]; then
+  cat - >$outfile;
+else
+  cat -;
+fi
+

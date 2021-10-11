@@ -1,0 +1,409 @@
+#*The following sections are common for WEB2PERL and WEB2HTML.
+
+
+# The special character which introduces WEB lines is given here.
+
+  #<Constants definitions#>=
+    const CharType $WEB_escape_char="#";
+
+
+# Part of the communication between the procedures is done via global
+variables.  |$WEB_file_name| stores the name of the input file;
+|$change_file_name| the name of the change file (if any). In
+|@input_line_list| all input lines are accumulated with the includes
+expanded and the change file entries replaced. All the output goes
+to |@output_line_list| which is finally transferred to the output file.
+
+  #<Global variables#>=
+    my StringType $WEB_file_name;
+    my StringType $change_file_name;
+    my StringListType @input_line_list;
+    my StringListType @output_line_list;
+
+
+# |$debugging_is_active| controls whether test information is put to stdout.
+A good way to set it would be a command line option. Here we set it
+manually in the program.
+
+  #<Constants d...#>=
+    const BooleanType $debugging_is_active=$FALSE;
+
+
+# The command line contains one or two parameters: the first is the name of
+the WEB file (mandatory), the second (optional) is the name of the WEB
+change file. If there is no change file given, the empty string will be
+returned. 
+
+  #<Extract...#>=
+    if (scalar(@ARGV)==0) {
+      fatal_error("usage: web2perl webfile [changefile]");
+    } else {
+      $WEB_file_name=shift(@ARGV);
+      if (scalar(@ARGV)>0) {
+	$change_file_name=shift(@ARGV);
+      } else {
+	$change_file_name="";
+      }#endif
+    } #endif
+
+
+#*Reading the source file. In pass 1 the source file is read into
+|@input_line_list|. Any include file found (indicated by |#i|) is expanded.
+This is a classical recursive situation as include files may themselves
+include other files. Hence we solve it by a recursive function |read_file|
+which is called with the name of the file to include.
+
+This function first checks if the file exists (otherwise a |fatal_error|)
+occurs. Then all lines are appended to |@input_line_list|. If an include
+statement is found, |read_file| is called recursively.
+
+  #<Subroutines#>=
+    sub read_file {
+      my StringType $filename=shift;
+
+      my StringType $line;
+      local *file_handle;
+
+      {
+        my BooleanType $success=open(file_handle, $filename);
+        if (!$success) {
+ 	  fatal_error("web2perl: cannot open $filename: $!");
+        } #endif
+      }
+      while ($line=<file_handle>) {
+        ## kick out NEWLINE
+        $line=~s/\r?\n$//;
+	if ($line !~ "^[$WEB_escape_char]i\s*(.*)") {
+	  push(@input_line_list, $line);
+	} else {  ## include file
+	  my StringType $include_file_name=$1;
+	  read_file($include_file_name);
+	} #endif
+      } #endwhile
+    }
+
+
+# The call for the initial source is easy.
+
+  #<Read WEB file and includes...#>=
+    read_file($WEB_file_name);
+
+
+#*Process change file.
+Pass 2 traverses all the lines read and checks a change file for any
+substitutions necessary to adapt a master WEB file to a specific
+environment.
+
+  #<Process change file#>=
+    {
+      local *changefile_handle;
+
+      #<Open change file into |changefile_handle|; abort on failure#>
+      #<Traverse change file and update |@input_line_list|#>
+
+      close(changefile_handle);
+    }
+
+    
+# The change file is opened via the |$change_file_name| given. The file
+handle is returned in |changefile_handle|. If anything unexpected happens,
+the program is stopped.
+
+  #<Open change file...#>=
+    {
+      my BooleanType $success=open(changefile_handle, $change_file_name);
+      if (!$success) {
+	fatal_error("web2perl: cannot open change file $change_file_name: $!");
+      } #endif
+    }
+      
+
+# The change file is read line by line. In principle the change file
+consists of substitutions embedded in #x#y#z lines. The #x and #y lines
+brackets a sequence of lines which have to be exactly matched in the input
+file. The lines bracketed by #y and #z are the replacement for the lines
+matched. All other lines are not significant and can be used for comments.
+
+Another important point is that the sequence of substitutions must be
+applied in order; thus the input file can be traversed sequentially.
+
+
+# The change file is read sequentially and parsed by a finite automaton.
+Whenever a #x, #y, or #z line is found a transition to the next state
+occurs. There are five states (|$in_comment|, |$at_first_match_line|,
+|$in_match_text|, |$in_replacement_text| and |$after_replacement_text|)
+which form - more or less - a cyclic state sequence. Further details will
+be given in a later module.
+
+  #<Constants...#>=
+    const CardinalType $in_comment=1;
+    const CardinalType $at_first_match_line=2;
+    const CardinalType $in_match_text=3;
+    const CardinalType $in_replacement_text=4;
+    const CardinalType $after_replacement_text=5;
+
+
+# When parsing a substitution on the change file, the program first tries
+to find matching lines in |@input_line_list|. The indices are stored in
+|$first_line_number| and |$last_line_number|. The replacement text is
+accumulated in |@changed_input_line_list|. After the #z has been parsed,
+the substitution is carried out on |@input_line_list|.
+
+If the change file ends prematurely, an appropriate error message is given.
+
+  #<Traverse change file...#>=
+    {
+      my StringListType @changed_input_line_list;
+      my CardinalType $first_line_number=FIRST_INDEX;
+      my CardinalType $last_line_number;
+      my StringType $line;
+      my StringListType @replacement_text;
+      my CardinalType $scan_state=$in_comment;
+
+      while ($line=<changefile_handle>) {
+	const BooleanType $done;
+
+        ## kick out NEWLINE
+        $line=~s/\r?\n$//;
+	if ($line =~ "^[$WEB_escape_char]([xyz])") {
+	  my StringType $match_char=$1;
+	  #<Update |$scan_state| based on |$match_char|#>
+	  $done=($scan_state!=$after_replacement_text);
+	} else {
+	  $done=$FALSE;
+	} #endif
+	if (!$done) {
+	  #<Handle changefile line according to |$scan_state|#>
+	} #endif
+      } #endwhile
+      if ($scan_state!=$in_comment) {
+        warning("unexpected eof in change file");
+      } #endif
+    }
+
+
+# The expected and following states are stored in two maps |%expected_state|
+and |%next_state| from characters to states. Arguments are the plain
+characters (either "x", "y" or "z"), result is the expected or next state.
+
+  #<Constants d...#>=
+    const StringMapType %expected_state=(
+      "x" => $in_comment,
+      "y" => $in_match_text,
+      "z" => $in_replacement_text);
+    const StringMapType %next_state=(
+      "x" => $at_first_match_line,
+      "y" => $in_replacement_text,
+      "z" => $after_replacement_text);
+
+
+# Whenever an entry #x, #y or #z is found in the change file, first there
+is a check, whether this entry is valid at that point. After that the
+transition to the next state is done.
+
+  #<Update |$scan...#>=
+    {
+      if ($scan_state ne $expected_state{$match_char}) {
+        warning("change file corrupt: unexpected $WEB_escape_char$match_char");
+      } #endif
+      $scan_state=$next_state{$match_char};
+    }
+
+
+# Scanning is controlled by a finite automaton with five states:
+  - In state |$in_comment| lines are skipped in the change file until a
+    "#x" is found.
+  - In state |$at_first_match_line| a single line is read and an exact
+    match for this line has to be found in |@input_line_list|; the index of
+    this line is stored into |$first_line_number|.
+    If there is no match, an error message is given.
+  - In state |$in_match_text| we found the match and are now checking that
+    consecutive lines in the WEB file match the lines in the change file.
+    All those lines are skipped and the last line index is recorded in
+    |$last_line_number|.
+  - In state |$in_replacement_text| the replacement text is copied to
+    |@replacement_text| and will be later on used for all the lines
+    previously matched.
+  - In state |$after_replacement_text| the replacement is executed via a
+    splice operation.
+
+  #<Handle changefile line according to |$scan_state|#>=
+    {
+      SWITCH ($scan_state) {
+        CASE(/$in_comment/) {
+	  do_nothing;  ENDCASE;
+	}
+        CASE(/$at_first_match_line/) {
+	  ## Find first matching line
+          for (;  $first_line_number<scalar(@input_line_list);
+	          $first_line_number++) {
+   	    last if ($input_line_list[$first_line_number] eq $line);
+          } #endfor
+	  if ($first_line_number>=scalar(@input_line_list)) {
+	    warning("no match found for change file entry: $line");
+	  } #endif
+	  $last_line_number=$first_line_number;	  @replacement_text=();
+	  $scan_state=$in_match_text;  ENDCASE;
+	}
+        CASE(/$in_match_text/) {
+	  $last_line_number++;
+	  if ($last_line_number>=scalar(@input_line_list) ||
+	      $input_line_list[$last_line_number] ne $line) {
+	    warning("change and master file mismatch: $last_line_number");
+	  } #endif
+	  ENDCASE;
+	}
+        CASE(/$in_replacement_text/) {
+	  push(@replacement_text, $line);  ENDCASE;
+	}
+        CASE(/$after_replacement_text/) {
+	  my CardinalType $matchlength;
+	  $matchlength=$last_line_number-$first_line_number+1;
+	  splice(@input_line_list, $first_line_number, $matchlength,
+	         @replacement_text);
+	  $scan_state=$in_comment;  ENDCASE;
+	}
+      } #endswitch
+    }
+
+
+#*Abbreviation expansion. All module names are stored in an internal list
+called |%module_name_list|. This list is used whenever the program wants to
+find out if some module name is already defined.
+
+  #<Global var...#>=
+    my StringSetType %module_name_list;
+
+
+# That list should be completely hidden from the outside; hence we need
+some methods: |clear_module_name_list|, |insert_into_module_name_list|,
+|lookup_in_module_name_list| and |module_name_list|.
+
+
+# |module_name_list| returns an array of currently known module names.
+
+  #<Subroutines#>=
+    sub module_name_list {
+      return keys(%module_name_list);
+    }
+
+
+# |clear_module_name_list| sets the set of known module names empty.
+
+  #<Subroutines#>=
+    sub clear_module_name_list {
+      %module_name_list={};
+    }
+
+
+# |insert_into_module_name_list| makes a given string a known module name.
+
+  #<Subroutines#>=
+    sub insert_into_module_name_list {
+      my StringType $module_name=shift;
+
+      $module_name_list{$module_name}="T";
+    }
+
+
+# |lookup_in_module_name_list| finds out if a given string is a known module
+name. This is easy as all the entries in |%module_name_list| are normalized.
+Thus the given string has to be normalized, too, and if it is abbreviated
+the trailing dots have to be discarded.
+
+As there might be no match possible or multiple matches, the functions
+solves this altogether by returning a list of matching entries.
+
+  #<Subroutines#>=
+    sub lookup_in_module_name_list {
+      my StringType $module_reference=shift;
+
+      my StringType $module_name;
+      my StringListType @name_list;
+
+      $module_reference=normalize_module_name($module_reference);
+      if (name_is_abbreviation($module_reference)) {
+        $module_reference =~ s/\.\.\.$//;
+      } #endif
+      @name_list=();
+      for $module_name (module_name_list()) {
+        if (index($module_name, $module_reference)==FIRST_INDEX) {
+          push(@name_list, $module_name);
+        } #endif
+      } #endfor
+      return @name_list;
+    }
+
+
+# We haven't yet specified how an abbreviated module name is given: it
+simply consists of a text with three dots at the end (for an ellipsis).
+
+  #<Subroutines#>=
+    sub name_is_abbreviation {
+      return (shift =~ /\.\.\.$/);
+    }
+
+
+# Whenever a module name is processed or stored, it has to be normalized
+before a lookup or entry in |module_name_list()| is feasible.
+
+Normalization means that all white space within a module name is squashed
+into single blanks and leading and trailing white space is removed. This is
+necessary as module names are considered equal even if the lengths of white
+space sequences between the words are not.
+
+  #<Subroutines#>=
+    sub normalize_module_name {
+      my StringType $name=shift;
+
+      $name=~ s/\s+/ /g;  $name =~ s/^\s*//;  $name =~ s/\s*$//;
+      return $name;
+    }
+
+
+# Now we are set how to handle a module name in a module definition.
+
+Note that it can be abbreviated. If it is not abbreviated, it should be
+stored in the module name list. Otherwise it must be expanded: If there is
+none or the expansion is ambiguous, a warning will be issued.
+|lookup_in_module_name_list| returns the list of matching module names.
+Hence those tests are easily done.
+
+  #<Subroutines#>=
+    sub store_or_lookup_name {
+      my StringType $module_name = shift;
+
+      if (!name_is_abbreviation($module_name)) {
+        insert_into_module_name_list($module_name);
+      } else {
+        my StringListType @matching_modules;
+	@matching_modules=lookup_in_module_name_list($module_name);
+        if (scalar(@matching_modules)!=1) {
+	  no_unique_match_warning($module_name, @matching_modules);
+        } else {
+	  $module_name=shift(@matching_modules);
+	} #endif
+      } #endif
+      return $module_name;
+    }
+
+
+# When the lookup of a module name results in either no match or more than
+one match, an appropriate warning will be given. This is no fatal error.
+
+  #<Subroutines#>=
+    sub no_unique_match_warning {
+      my StringType $module_name = shift;
+      my StringListType @matching_modules = @_;
+
+      if (scalar(@matching_modules)==0) {
+	warning("no match found for: $module_name");
+      } elsif (scalar(@matching_modules)>1) {
+        warning("ambiguous reference: $module_name");
+      } else {
+	fatal_error("Can't happen in ''no_unique_match_warning''");
+      } #endif
+    }
+
+
+#*Here ends the common part for WEB2PERL and WEB2HTML.

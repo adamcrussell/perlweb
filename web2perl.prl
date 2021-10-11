@@ -1,0 +1,472 @@
+
+use strict;
+use English;
+my  $TRUE=1;
+my  $FALSE=0;
+
+my  $banner_line="web2perl Version 1.0, August 1997";
+
+my  $WEB_escape_char="#";
+
+my  $debugging_is_active=$FALSE;
+
+my  $in_comment=1;
+my  $at_first_match_line=2;
+my  $in_match_text=3;
+my  $in_replacement_text=4;
+my  $after_replacement_text=5;
+
+my  %expected_state=(
+"x" => $in_comment,
+"y" => $in_match_text,
+"z" => $in_replacement_text);
+my  %next_state=(
+"x" => $at_first_match_line,
+"y" => $in_replacement_text,
+"z" => $after_replacement_text);
+
+my  $unnamed_module_name=" ";
+
+my  $trace_line_counter;
+my  $trace_delta;
+
+my  $WEB_file_name;
+my  $change_file_name;
+my  @input_line_list;
+my  @output_line_list;
+
+my  %module_name_list;
+
+my  @macro_line_list;
+
+my  %module_lines;
+
+my  $maximum_expansion_depth;
+
+sub fatal_error {
+  my  $message=shift;
+
+  die("$message\n");
+}
+
+sub warning {
+  my  $message=shift;
+
+  warn("$message\n");
+}
+
+sub trace_start {
+  my  $name=shift;
+  my  $delta=shift;
+
+  print STDERR $name.":       ";
+  $trace_delta = (!defined($delta) ? 100
+  : ( $delta<=0 ? 1 : $delta));
+  $trace_line_counter=0;
+}
+
+sub trace_line {
+  my  $new_counter_value=shift;
+
+  if (defined($new_counter_value)) {
+    $trace_line_counter=$new_counter_value;
+  } else {
+    $trace_line_counter++;
+  }
+  if ($trace_line_counter % $trace_delta == 0 ||
+  defined($new_counter_value)) {
+    printf STDERR "\x8\x8\x8\x8\x8\x8"."%6d", $trace_line_counter;
+  }
+}
+
+sub trace_end {
+  printf STDERR "\x8\x8\x8\x8\x8\x8"."%6d\n", $trace_line_counter;
+}
+
+sub read_file {
+  my  $filename=shift;
+
+  my  $line;
+  local *file_handle;
+
+  {
+    my  $success=open(file_handle, $filename);
+    if (!$success) {
+      fatal_error("web2perl: cannot open $filename: $!");
+    } #endif
+  }
+  while ($line=<file_handle>) {
+    $line=~s/\r?\n$//;
+    if ($line !~ "^[$WEB_escape_char]i\s*(.*)") {
+      push(@input_line_list, $line);
+    } else {  ## include file
+      my  $include_file_name=$1;
+      read_file($include_file_name);
+    } #endif
+  } #endwhile
+}
+
+sub module_name_list {
+  return keys(%module_name_list);
+}
+
+sub clear_module_name_list {
+  %module_name_list={};
+}
+
+sub insert_into_module_name_list {
+  my  $module_name=shift;
+
+  $module_name_list{$module_name}="T";
+}
+
+sub lookup_in_module_name_list {
+  my  $module_reference=shift;
+
+  my  $module_name;
+  my  @name_list;
+
+  $module_reference=normalize_module_name($module_reference);
+  if (name_is_abbreviation($module_reference)) {
+    $module_reference =~ s/\.\.\.$//;
+  } #endif
+  @name_list=();
+  for $module_name (module_name_list()) {
+    if (index($module_name, $module_reference)==$[) {
+      push(@name_list, $module_name);
+    } #endif
+  } #endfor
+  return @name_list;
+}
+
+sub name_is_abbreviation {
+  return (shift =~ /\.\.\.$/);
+}
+
+sub normalize_module_name {
+  my  $name=shift;
+
+  $name=~ s/\s+/ /g;  $name =~ s/^\s*//;  $name =~ s/\s*$//;
+  return $name;
+}
+
+sub store_or_lookup_name {
+  my  $module_name = shift;
+
+  if (!name_is_abbreviation($module_name)) {
+    insert_into_module_name_list($module_name);
+  } else {
+    my  @matching_modules;
+    @matching_modules=lookup_in_module_name_list($module_name);
+    if (scalar(@matching_modules)!=1) {
+      no_unique_match_warning($module_name, @matching_modules);
+    } else {
+      $module_name=shift(@matching_modules);
+    } #endif
+  } #endif
+  return $module_name;
+}
+
+sub no_unique_match_warning {
+  my  $module_name = shift;
+  my  @matching_modules = @_;
+
+  if (scalar(@matching_modules)==0) {
+    warning("no match found for: $module_name");
+  } elsif (scalar(@matching_modules)>1) {
+    warning("ambiguous reference: $module_name");
+  } else {
+    fatal_error("Can't happen in ''no_unique_match_warning''");
+  } #endif
+}
+
+sub expand_module {
+  my  $module_name=shift;
+  my  $stack_depth=shift;
+
+  my  $success=$TRUE;
+
+  if ($stack_depth>$maximum_expansion_depth) {
+    $success=$FALSE;
+  } else {
+    my  $line;
+    my  @lines_in_module;
+
+    @lines_in_module=(exists($module_lines{$module_name}) ? @{ $module_lines{$module_name} } : ());
+    for $line (@lines_in_module) {
+      trace_line();
+      if ($line !~ /^\s*[$WEB_escape_char]</) { ## no expansion necessary
+        push(@output_line_list, $line);
+      } else { ## expansion necessary
+        my  @matching_modules;
+        my  $module_reference;
+        $module_reference=$line;
+        $module_reference=~ s/$WEB_escape_char<(.*)$WEB_escape_char>/$1/;
+        $module_reference=normalize_module_name($module_reference);
+        @matching_modules=lookup_in_module_name_list($module_reference);
+        if (scalar(@matching_modules)!=1) {
+          no_unique_match_warning($module_reference, @matching_modules);
+        } else { ## expand recursively
+          my  $referenced_module;
+          $referenced_module=shift(@matching_modules);
+          if ($success) {
+            $success=expand_module($referenced_module, $stack_depth+1);
+          } #endif
+        } #endif
+      } #endif
+    } #endfor
+  } #endif
+  return $success;
+}
+
+{
+  print STDERR "$banner_line\n";
+  if (scalar(@ARGV)==0) {
+    fatal_error("usage: web2perl webfile [changefile]");
+  } else {
+    $WEB_file_name=shift(@ARGV);
+    if (scalar(@ARGV)>0) {
+      $change_file_name=shift(@ARGV);
+    } else {
+      $change_file_name="";
+    }#endif
+  } #endif
+
+  read_file($WEB_file_name);
+
+  if ($change_file_name ne "") {
+    {
+      local *changefile_handle;
+
+      {
+        my  $success=open(changefile_handle, $change_file_name);
+        if (!$success) {
+          fatal_error("web2perl: cannot open change file $change_file_name: $!");
+        } #endif
+      }
+
+      {
+        my  @changed_input_line_list;
+        my  $first_line_number=$[;
+        my  $last_line_number;
+        my  $line;
+        my  @replacement_text;
+        my  $scan_state=$in_comment;
+
+        while ($line=<changefile_handle>) {
+          my  $done;
+
+          $line=~s/\r?\n$//;
+          if ($line =~ "^[$WEB_escape_char]([xyz])") {
+            my  $match_char=$1;
+            {
+              if ($scan_state ne $expected_state{$match_char}) {
+                warning("change file corrupt: unexpected $WEB_escape_char$match_char");
+              } #endif
+              $scan_state=$next_state{$match_char};
+            }
+
+            $done=($scan_state!=$after_replacement_text);
+          } else {
+            $done=$FALSE;
+          } #endif
+          if (!$done) {
+            {
+              switch: for ($scan_state) {
+                ;(/$in_comment/) && do {
+                  ;  last switch;
+                }
+                ;(/$at_first_match_line/) && do {
+                  for (;  $first_line_number<scalar(@input_line_list);
+                  $first_line_number++) {
+                    last if ($input_line_list[$first_line_number] eq $line);
+                  } #endfor
+                  if ($first_line_number>=scalar(@input_line_list)) {
+                    warning("no match found for change file entry: $line");
+                  } #endif
+                  $last_line_number=$first_line_number;	  @replacement_text=();
+                  $scan_state=$in_match_text;  last switch;
+                }
+                ;(/$in_match_text/) && do {
+                  $last_line_number++;
+                  if ($last_line_number>=scalar(@input_line_list) ||
+                  $input_line_list[$last_line_number] ne $line) {
+                    warning("change and master file mismatch: $last_line_number");
+                  } #endif
+                  last switch;
+                }
+                ;(/$in_replacement_text/) && do {
+                  push(@replacement_text, $line);  last switch;
+                }
+                ;(/$after_replacement_text/) && do {
+                  my  $matchlength;
+                  $matchlength=$last_line_number-$first_line_number+1;
+                  splice(@input_line_list, $first_line_number, $matchlength,
+                  @replacement_text);
+                  $scan_state=$in_comment;  last switch;
+                }
+              } #endswitch
+            }
+
+          } #endif
+        } #endwhile
+        if ($scan_state!=$in_comment) {
+          warning("unexpected eof in change file");
+        } #endif
+      }
+
+      close(changefile_handle);
+    }
+
+  } #endif
+  {
+    my  $list_length;
+
+    $list_length=scalar(@input_line_list);
+    trace_start("removing comments");
+    @input_line_list=grep(($_ !~ "^[ \t]*##"),  @input_line_list);
+    trace_line($list_length);
+    trace_end();
+  }
+
+  {
+    my  $undefined_state=0;
+    my  $in_text_state=1;
+    my  $in_def_state=2;
+    my  $in_code_state=3;
+
+    my  $counter=1;
+    my  $line;
+    my  @module_line_list;
+    my  $module_name;
+    my  $state=$undefined_state;
+
+    trace_start("accumulating");
+    clear_module_name_list();
+    foreach $line (@input_line_list) {
+      trace_line();
+      switch: for ($line) {
+        ;(/^\s*[$WEB_escape_char][ \*]/) && do {
+          ;
+
+          $state=$in_text_state;  last switch;
+        }
+        ;(/^\s*[$WEB_escape_char]d/) && do {
+          {
+            $line =~ s/=/\t/;
+            $line =~ s/\s*[$WEB_escape_char]d/#define/;
+            push(@macro_line_list, $line);
+          }
+
+          $state=$in_def_state;  last switch;
+        }
+
+        ;(/^\s*[$WEB_escape_char]p/ ||            /^\s*[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>\s*=$/) && do {
+          if ($state==$in_code_state || $state==$undefined_state) {
+            printf("module definition in wrong context (l.%d)\n%s\n",
+            $counter, $line);
+          } #endif
+          {
+            if ($line =~ /^\s*[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>\s*=$/) {
+              $module_name=normalize_module_name($1);
+            } else {
+              $module_name=$unnamed_module_name;
+            } #endif
+            $module_name=store_or_lookup_name($module_name);
+          }
+
+          $state = $in_code_state;  last switch;
+        }
+        ;(/.*/) && do {
+          {
+            if ($state==$undefined_state || $state==$in_text_state) {
+              ;
+            } elsif ($state==$in_def_state) {
+              my  $previous_line;
+              $previous_line=pop(@macro_line_list);
+              push(@macro_line_list, $previous_line."\\" , $line);
+            } elsif ($state==$in_code_state) {
+              @module_line_list=(exists($module_lines{$module_name}) ? @{ $module_lines{$module_name} } : ());
+              push(@module_line_list, $line);
+              $module_lines{$module_name}=[ @module_line_list ];
+              if ($line =~ /$WEB_escape_char\<(.*)$WEB_escape_char\>/) {
+                my  $referenced_module;
+                $referenced_module=normalize_module_name($1);
+                if (!name_is_abbreviation($referenced_module)) {
+                  insert_into_module_name_list($referenced_module);
+                } #endif
+              } #endif
+            } #endif
+          };
+
+          last switch;
+        }
+      } #endswitch
+      $counter++;
+    } #endwhile
+    trace_end();
+  }
+
+  if ($debugging_is_active) {
+    {      
+      my  $line;
+      my  $counter;
+
+      printf("MACROS:\n========\n");
+      $counter=1;
+      foreach $line (@macro_line_list) {
+        printf("%4d %s\n", $counter, $line);
+        $counter++;
+      } #endforeach
+    }
+
+    {
+      my  $module_name;
+
+      printf("\nDEFINITIONS:\n============\n");
+      foreach $module_name (module_name_list()) {
+        my  $counter;
+        my  $line;
+        my  @module_line_list;
+
+        printf("%s\n", $module_name);
+        @module_line_list=(exists($module_lines{$module_name}) ? @{ $module_lines{$module_name} } : ());
+        $counter=1;
+        foreach $line (@module_line_list) {
+          printf("%4d %s\n", $counter, $line);
+          $counter++;
+        } #endforeach
+      } #endforeach
+    }
+
+  } #endif
+  {
+    my  $line;
+
+    trace_start("macros",10);
+    foreach $line (@macro_line_list) {
+      trace_line();
+      push(@output_line_list, $line);
+    } #endforeach
+    trace_end();
+  }
+
+  {
+    trace_start("expanding");
+    $maximum_expansion_depth=scalar(module_name_list());
+    if (!expand_module($unnamed_module_name, 1)) {
+      fatal_error("circular module definition");
+    } #endif
+    trace_end();
+  }
+
+  {
+    my  $line;
+
+    for $line (@output_line_list) {
+      print $line."\n";
+    } #endfor
+  }
+
+}
+

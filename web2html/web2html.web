@@ -1,0 +1,700 @@
+#*Web2HTML -- Converter from PerlWEB to HTML. Developped
+by Thomas Tensi, 1996.
+
+The purpose of this program is to take a program in PerlWEB and
+generate a HTML text from it. The HTML text looks as follows:
+
+- Each module in the PerlWEB program gets a unique number.
+- The documentation parts of a PerlWEB module are taken as HTML
+  paragraphs. Whenever a blank line separates two lines, a new paragraph is
+  started. Lines starting with a minus are taken as lines from an unordered
+  list.
+- The definition and code part of a module is set in a special font as is.
+  The module names in module applications are completely expanded.
+  Additionally they have the module number appended where the corresponding
+  module definition can be found. For navigation there is also a hyperlink
+  to this module.
+- Subroutines are handled similarly.
+- Finally a lexically sorted list of all module names with definitions and
+  applications is appended.
+
+
+#i includes/general.web
+
+
+# WebToHTML identifies itself with a banner line.
+
+  #<Const...#>=
+    const StringType $banner_line="web2html Version 1.0, August 1997";
+
+
+#*Main Program.
+The WebToHMTL filter consists of four passes:
+ - In pass 1 the PerlWEB source is read and any includes are resolved.
+ - In pass 2 the change file is read and any matching lines are replaced
+   by the appropriate substitutions.
+ - Pass 3 finds out where the module definitions are initially defined.
+ - In pass 4 the HTML text is generated.
+
+To check the correctness of the first three passes a debugging step might
+be introduced which prints out the internal tables accumulated so far. This
+printout only takes place when the constant |$debugging_is_active| is set.
+
+  #<Main program#>=
+    {
+      print STDERR "$banner_line\n";
+      #<Extract |$WEB_file_name| and |$change_file_name| from command line#>
+      #<Read WEB file and includes into |@input_line_list|#>
+      if ($change_file_name ne "") {
+	#<Process change file#>
+      } #endif
+      #<Build list of module uses and subroutine definitions#>
+      if ($debugging_is_active) {
+        #<Print internal tables#>
+      } #endif
+      #<Put out HTML text#>
+      #<Put out lines in |@output_line_list|#>
+    }
+
+
+#i includes/web2xxx.web
+
+
+#*Build module and subroutine list. In pass 3 all modules are sequentially
+scanned for module definitions, applications and subroutines. The result is
+put into some global table which is accessed by six functions:
+  - m2s_clear(): initializes the global table;
+  - m2s_insert(module, module_number): adds a module number for a given module,
+    where this module is defined or applied; a negative module_number -m
+    indicates that a module is defined in module number m.
+  - m2s_give_modules(): returns the module names in a sorted list;
+  - m2s_give_module_numbers(module): returns the module numbers for a given
+    module in a sorted list (module numbers defining this module are negative);
+  - m2s_give_first_def(module): returns the module number of the first
+    definition for a given module;
+  - m2s_give_definitions(module): returns the module numbers of all the
+    definitions for a given module;
+
+
+# Using some of the above functions the scanning for this pass is very
+simple. When a text part of a module is found a counter is incremented,
+when a module definition or application is found the current number is
+stored in the |module_to_module_number_map|.
+
+A subroutine definition is stored in |subroutine_to_module_number_map|.
+
+  #<Build list of...#>=
+    {
+      my CardinalType $module_number=0;
+      my StringType $line;
+      my CardinalType $line_number=0;
+      my BooleanType $in_text_part=$FALSE;
+
+      trace_start("accumulating defs");
+      m2s_clear();
+      foreach $line (@input_line_list) {
+	trace_line();
+	$line_number++;
+        SWITCH ($line) {
+          ## start of text
+          CASE(/^\s*[$WEB_escape_char][ \*]/) {
+	    $in_text_part=$TRUE;
+	    $module_number++;  ENDCASE;
+	  }
+          ## start of unnamed module
+          CASE(/^\s*[$WEB_escape_char]p/) {
+	    $in_text_part=$FALSE;  ENDCASE;
+	  }
+          ## start of module definition or application
+          CASE(/^\s*[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>\s*(=?)$/) {
+	    my StringType $module_name;
+	    my StringType $kind_of_use;
+
+	    $module_name=normalize_module_name($1);
+	    $kind_of_use=($2 eq "=" ? "definition" : "application");
+	    if ($in_text_part == ($kind_of_use eq "application")) {
+              warning("$kind_of_use in wrong context (l.$line_number): ".
+		      $module_name);
+	    } #endif
+	    $module_name=store_or_lookup_name($module_name);
+	    if ($kind_of_use eq "definition") {
+	      m2s_insert($module_name, -$module_number);
+	    } else {
+	      m2s_insert($module_name, $module_number);
+	    }
+	    $in_text_part=$FALSE;
+            ENDCASE;
+	  }
+          ## subroutine definition
+          CASE(/^\s*sub\s*(\w+)/) {
+	    my StringType $subroutine_name=$1;
+
+	    if (!$in_text_part) { # check whether this is in code part
+	      if (exists($subroutine_to_module_number_map{$subroutine_name})) {
+		warning("double subroutine definition (l.$line_number): ".
+			$subroutine_name);
+	      } #endif
+	      $subroutine_to_module_number_map{$subroutine_name}=$module_number;
+	    } #endif
+	  }
+        } #endswitch
+      } #endwhile
+      trace_end();
+    }
+
+
+# The subroutine to module map is implemented as a hash table which
+is a mapping from a subroutine name to that module number where it is
+defined.
+
+  #<Global v...#>=
+    my StringMapType %subroutine_to_module_number_map;
+
+
+# The |module_to_module_number_map| is implemented as a hash table which
+is a mapping from a module name to a list of module numbers where this
+module is defined or applied.
+
+  #<Global v...#>=
+    my StringMapType %module_to_module_number_map;
+
+
+# Clearing the maps is easy.
+
+  #<Subroutines#>=
+    sub m2s_clear {
+      %module_to_module_number_map=();
+    }
+
+
+# The only slightly complicated part is to update
+|%module_to_module_number_map| for the new module use.
+
+|$module_name| has been found in module |$module_number|.
+  - If |$module_name| has not yet been found, |%module_to_module_number_map|
+    gets a new entry.
+  - Otherwise it is an extension and the list of modules has to extended.
+
+Internally modules with definitions are stored as negative module numbers.
+
+  #<Subroutines#>=
+    sub m2s_insert {
+      my StringType $module_name=shift;
+      my CardinalType $module_number=shift;
+      my StringListType @modules;
+
+      @modules=RETURN_ARRAY($module_to_module_number_map{$module_name});
+      push(@modules, $module_number);
+      $module_to_module_number_map{$module_name}=NEWREF(@modules);
+    }
+
+
+# The module names from the |module_to_module_number_map| are just the hash
+keys.
+
+  #<Subroutines#>=
+    sub m2s_give_modules {
+      return sort(keys(%module_to_module_number_map));
+    }
+
+
+# For a given module name all entries in |%module_to_module_number_map| make
+up the modules where this name occurs.
+
+  #<Subroutines#>=
+    sub m2s_give_module_numbers {
+      my StringType $module_name=shift;
+
+      return RETURN_ARRAY($module_to_module_number_map{$module_name});
+    }
+
+
+# For a given module name all definitions in |%module_to_module_number_map| are
+found via |m2s_give_modules| and selecting all negative entries.
+
+|m2s_give_first_def| returns the first element in this list or "???" if the
+list is empty.
+
+  #<Subroutines#>=
+    sub m2s_give_definitions {
+      my StringType $module_name=shift;
+
+      my StringListType @definitions;
+      my StringType $entry;
+      my StringListType @modules=
+	RETURN_ARRAY($module_to_module_number_map{$module_name});
+
+      foreach $entry (@modules) {
+	if ($entry<0) {
+	  push(@definitions, -$entry);
+	} #endif
+      } #endforeach
+      return @definitions;
+    }
+
+    sub m2s_give_first_def {
+      my StringType $module_name=shift;
+      my StringListType @definitions=m2s_give_definitions($module_name);
+
+      if (scalar(@definitions)>0) {
+	return shift(@definitions);
+      } else {
+	return "???";
+      }
+    }
+
+
+#*Pass 4 (HTML Output). The output of HTML works as described in the
+introductory module:
+- Each module in the PerlWEB program gets a unique number.
+- The documentation parts of a PerlWEB module are taken as HTML
+  paragraphs. Whenever a blank line separates two lines, a new paragraph is
+  started. Lines starting with a minus are taken as lines from an unordered
+  list.
+- The definition and code part of a module is set in a special font as is.
+  The module names in module applications are completely expanded.
+  Additionally they have the module number appended where the corresponding
+  module definition can be found. For navigation there is also a hyperlink
+  to this module.
+- Subroutines are handled similarly.
+- Finally a lexically sorted list of all module names is appended.
+
+
+# To manage the output of HTML tags, a finite state automaton is used. The
+input of this FSA is an input class deduced from the current line read.
+According to this input a state transition occurs and some output is also
+produced (part of which is normally the line read).
+
+- Input symbols are "c" (for code start), "d" (for definition start),
+  "e" (for empty line consisting of white space only), "i" (for an indented
+  line with leading white space), "l" (for list item line with a leading minus
+  character), "n" (for normal text line) and "t" (for text part start line).
+
+  The tags for code are '#p' or a module definition. The tag for a
+  definition is '#d' and a text part starts with either '# ' or '#*'.
+
+- States of the automaton are "start" (at the beginning of the file),
+  "in_text_normal" (in text part and nothing special to consider),
+  "in_text_empty" (in text part and previous lines were empty),
+  "in_text_list" (in text part within unordered list), "in_text_list" (in
+  text part within unordered list and previous lines were empty),
+  "in_text_indented" (in text part and processing a continuation of a list
+  item), "in_definition" (in macro definition part), "in_def_empty"  (in
+  definition part and previous lines were empty), "in_code" (in code part)
+  and "in_code_empty" (in code part and previous lines were empty).
+
+- Possible output is a string of the following symbols: "P" and "p" (for
+  paragraph start and end), "U" and "u" (for start and end of an unordered
+  list), "L" and "l" (for start and end of a list item), "I" and "i" (for
+  start and end of indented lines), "C" and "c" (for uninterpreted line
+  (=code) start and end), "|" (for a NEWLINE) and "#" for the line itself.
+
+The mapping from state and input to next state and output is done via a
+hash table. The result string contains both next state and output: they are
+separated by a slash.
+
+  #<Constants def...#>=
+    const StringMapType %HTML_FSA = (
+      "start" =>
+	{ "c"=>"ERROR/", "d"=>"ERROR/", "e"=>"start/", "i"=>"ERROR/",
+	  "l"=>"ERROR/", "n"=>"ERROR/", "t"=>"in_text_normal/P#" },
+      "in_text_normal" =>
+	{ "c"=>"in_code/p|C|#", "d"=>"in_definition/p|C|#",
+	  "e"=>"in_text_empty/p|",
+	  "i"=>"in_text_indented/p|I#", "l"=>"in_text_list/p|U|LP#",
+	  "n"=>"in_text_normal/#", "t"=>"in_text_normal/p|P#" },
+      "in_text_empty" =>
+	{ "c"=>"in_code/C|#", "d"=>"in_definition/C|#", "e"=>"in_text_empty/",
+	  "i"=>"in_text_indented/I#", "l"=>"in_text_list/U|LP#",
+	  "n"=>"in_text_normal/P#", "t"=>"in_text_normal/P#" },
+      "in_text_list" =>
+	{ "c"=>"in_code/pl|u|C|#", "d"=>"in_definition/pl|u|C|#",
+	  "e"=>"in_text_list_empty/", "i"=>"in_text_list/#",
+	  "l"=>"in_text_list/pl|LP#", "n"=>"in_text_normal/pl|u|P#",
+	  "t"=>"in_text_normal/pl|u|P#" },
+      "in_text_list_empty" =>
+	{ "c"=>"in_code/pl|u|C|#", "d"=>"in_definition/pl|u|C|#",
+	  "e"=>"in_text_list_empty/", "i"=>"in_text_list/p|P#",
+	  "l"=>"in_text_list/pl|LP#", "n"=>"in_text_normal/pl|u|P#",
+	  "t"=>"in_text_normal/pl|u|P#" },
+      "in_text_indented" =>
+	{ "c"=>"in_code/i|C|#", "d"=>"in_definition/i|C|#",
+	  "e"=>"in_text_empty/i|",
+	  "i"=>"in_text_indented/#", "l"=>"in_text_list/i|U|LP#",
+	  "n"=>"in_text_normal/i|P#", "t"=>"in_text_normal/i|P#" },
+      "in_definition" =>
+	{ "c"=>"in_code/c|C|#", "d"=>"in_definition/#", "e"=>"in_def_empty/",
+	  "i"=>"in_definition/#", "l"=>"in_definition/#",
+	  "n"=>"in_definition/#", "t"=>"in_text_normal/c|P#" },
+      "in_def_empty" =>
+	{ "c"=>"in_code/c|C|#", "d"=>"in_definition/|#", "e"=>"in_def_empty/",
+	  "i"=>"in_definition/|#", "l"=>"in_definition/|#",
+	  "n"=>"in_definition/|#", "t"=>"in_text_normal/c|P#" },
+      "in_code" =>
+	{ "c"=>"ERROR/", "d"=>"ERROR/", "e"=>"in_code_empty/", "i"=>"in_code/#",
+	  "l"=>"in_code/#", "n"=>"in_code/#", "t"=>"in_text_normal/c|P#" },
+      "in_code_empty" =>
+	{ "c"=>"ERROR/", "d"=>"ERROR/", "e"=>"in_code_empty/",
+	  "i"=>"in_code/|#", "l"=>"in_code/|#", "n"=>"in_code/|#",
+	  "t"=>"in_text_normal/c|P#" }
+      );
+
+
+# Based on this automaton the HTML output works as follows.
+
+  #d PUT_OUT(str) = push(@output_line_list, str)
+
+  #<Put out HTML...#>=
+    {
+      my CardinalType $module_number=0;
+      my StringType $line;
+      my StringType $state="start";
+
+      trace_start("Putting out HTML",20);
+      PUT_OUT("<HTML>");
+      PUT_OUT("<HEAD><TITLE>$WEB_file_name</TITLE></HEAD>");
+      PUT_OUT("<BODY>");
+      foreach $line (@input_line_list) {
+	my StringType $input_class;
+	my StringType $output;
+	trace_line();
+        #<Classify and preprocess |$line| into input_class for |$state|#>
+	($state,$output)=split("/", $HTML_FSA{$state}{$input_class});
+	if ($state eq "ERROR") {
+	  warning("unexpected part: $line");  $state="start";
+	} #endif
+	#<Put out FSA output#>
+      } #endwhile
+      #<Put out list of module applications and definitions#>
+      PUT_OUT("</BODY></HTML>");
+      trace_end();
+    }
+
+
+# The input line for HTML is classified by application of several match
+patterns. Whenever the line starts with a |$WEB_escape_char| after some
+white space the classification is done after the next character.
+
+For the first line in a text part of a module and any module definition or
+applications a preprocessing of the line is necessary (e.g. to insert
+hyperlinks or define anchors).
+
+  #<Classify and preprocess...#>=
+    {
+      SWITCH ($line) {
+	CASE(/^\s*[$WEB_escape_char]([ \*])/) {
+	  my CharType $intro_tag=$1;
+	  #<Process start of text part of a module#>
+	  $input_class="t";  ENDCASE;
+	}
+	CASE(/^\s*[$WEB_escape_char]d/) {
+	  $input_class="d";
+	  $line=normalize_for_HTML($line);
+	  ENDCASE;
+	}
+	CASE(/^\s*[$WEB_escape_char]p/) {
+	  $input_class="c";  ENDCASE;
+	}
+	CASE(/^\s*[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>\s*=$/) {
+	  my StringType $module_name=$1;
+	  #<Process start of module definition#>
+	  $input_class="c";  ENDCASE;
+	}
+	CASE(/[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>/) {
+	  my StringType $module_name=$1;
+	  #<Process module application#>
+	  $input_class="n";  ENDCASE;
+	}
+	CASE(/^\s*$/) {
+	  $input_class="e";  ENDCASE;
+	}
+	DEFAULT {
+	  if    ($line =~ /^\s*-/) { $input_class="l"; }
+	  elsif ($line =~ /^\s+/)  { $input_class="i"; }
+	  else                     { $input_class="n"; }
+	  if ($state eq "in_code" || $state eq "in_code_empty" ||
+	      $state eq "in_definition" || $state eq "in_def_empty") {
+	    #<Process simple line in definition or code part#>
+          } else {
+	    #<Process simple line in text part#>
+	  }
+	}
+      } #endswitch
+    }
+
+
+# The HTML text for a text part consists of the module number instead of
+the text start marker. The module number is made the anchor for any
+references to this module.
+
+  #d MODULE_LABEL(number)="module_".number
+
+  #<Process start of text part of a module#>=
+    {
+      my BooleanType $is_starred_module=($intro_tag eq "*");
+      my StringType $line_prefix;
+      my StringType $anchor;
+
+      $module_number++;
+      if ($is_starred_module) {
+	my StringType $module_title;
+	$line =~ s/^\s*$WEB_escape_char\*\s*([^\.]*)\.//;
+	$module_title = normalize_text_line($1);
+	$line_prefix="<HR NOSHADE SIZE=4></HR>".
+		     "<B>".$module_number.". ".$module_title.".</B>";
+      } else {
+	$line =~ s/^\s*$WEB_escape_char\s+//;
+	$line_prefix="<HR NOSHADE SIZE=1></HR>$module_number. ";
+      } #endif
+      $anchor="<A NAME=\"".MODULE_LABEL($module_number)."\"></A>";
+      $line=normalize_text_line($line);
+      $line=$anchor.$line_prefix.$line;
+    }
+
+
+# A module definition is handled similarly to a code module. To
+faciliate reading the module name is completely expanded.
+
+Additionally the opening and closing angle brackets are hyperlinks to
+the previous and next definition of this module.
+
+  #<Process start of module definition#>=
+    {
+      my CardinalType   $def_count;
+      my StringListType @def_module_numbers;
+      my CardinalType   $position;
+      my StringType     $gt_sym="&gt;&gt;";
+      my StringType     $lt_sym="&lt;&lt;";
+
+      $module_name=normalize_module_name($module_name);
+      $module_name=store_or_lookup_name($module_name);
+      @def_module_numbers=m2s_give_definitions($module_name);
+      $def_count=scalar(@def_module_numbers);
+      for ($position=FIRST_INDEX;  $position<$def_count;  $position++) {
+	last if ($def_module_numbers[$position] eq $module_number);
+      }
+      if ($position>FIRST_INDEX) {
+	$lt_sym=find_hyperlink_string($def_module_numbers[$position-1],
+				      $lt_sym);
+      }
+      if ($position<$def_count+FIRST_INDEX-1) {
+	$gt_sym=find_hyperlink_string($def_module_numbers[$position+1],
+				      $gt_sym);
+      }
+      $line =~ s{[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>\s*=}
+		{$lt_sym$module_name$gt_sym =};
+    }
+
+
+# Whenever a module application is found there are three things to do:
+- The name is completely expanded.
+- The number of the first definition is appended as a subscript.
+- A hyperlink to that definition is inserted.
+
+  #<Process module application#>=
+    {
+      my StringType $first_def;
+      my StringType $hyperlink;
+
+      $module_name=normalize_module_name($module_name);
+      $module_name=store_or_lookup_name($module_name);
+
+      $first_def=m2s_give_first_def($module_name);
+      $hyperlink=find_hyperlink_string($first_def,
+				       "<SUB>".$first_def."</SUB>");
+      $line =~ s{[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>}
+		{&lt;&lt;$module_name&gt;&gt;$hyperlink};
+    }
+
+
+# Now we have processed all special lines. Simple lines with no tags are
+either in the text part or in the definition or code part. Based on the
+state of the HTML-FSA a distribution was done before.
+
+
+# Lines in the text part may contain HTML tags, but this is not encouraged.
+First the line is processed in |normalize_text_line| (e.g. to replace the
+vertical bars by font changes) and finally any leading minus is kicked out.
+
+  #<Process simple line in t...#>=
+    {
+      $line=normalize_text_line($line);
+      $line =~ s/^\s*-\s*//;
+    }
+
+
+# Code has to be cleaned from any tags which could make HMTL browsers
+choke. This is done in |normalize_for_HTML|.
+
+Code lines containing a subroutine definition or application need special
+processing. An application is subscripted by the module number where the
+definition occurs and is also linked to that module.
+
+  #<Process simple line in d...#>=
+    {
+      $line=normalize_for_HTML($line);
+      if ($line !~ /^\s*sub\s+\w+/) {
+	#<Check for subroutine match and insert module numbers#>
+      } #endif
+    }
+
+
+# It is not easy to find a subroutine application: we simply scan the
+given line for the names of all subroutines in
+|subroutine_to_module_number_map| followed by a left parenth. When there is a
+match, we assume that the subroutine is applied here.
+
+  #<Check for subroutine match...#>=
+    {
+      my StringType $subroutine_name;
+
+      foreach $subroutine_name (keys(%subroutine_to_module_number_map)) {
+	if ($line =~ /\W$subroutine_name\s*\(/) {
+	  my CardinalType $module_number;
+	  my StringType $hyperlink;
+
+	  $module_number=$subroutine_to_module_number_map{$subroutine_name};
+	  $hyperlink=find_hyperlink_string($module_number,
+					   "<SUB>".$module_number."</SUB>");
+	  $line =~ s{(\W$subroutine_name)(\W)}
+		    {$1$hyperlink$2}g;
+	} #endif
+      } #endforeach
+    }
+
+
+# Some special characters (e.g. less and greater characters) have to be
+converted for HTML output. This is done with |normalize_for_HTML()|.
+
+  #<Subroutines#>=
+    sub normalize_for_HTML {
+      my StringType $line=shift;
+
+      $line =~ s/&/&amp;/g;
+      $line =~ s/</&lt;/g;
+      $line =~ s/>/&gt;/g;
+      return $line;
+    }
+
+
+# The hyperlinks refer to module labels. The utility function
+|find_hyperlink_string| builds the HTML string for a link to a module
+(given by number). This link has a linking text as a second parameter.
+
+  #<Subroutines#>=
+    sub find_hyperlink_string {
+      my CardinalType $module_number = shift;
+      my StringType $linking_text = shift;
+
+      return "<A HREF=\"#".MODULE_LABEL($module_number)."\">".
+	     $linking_text."</A>";
+    }
+
+
+# For a line in the text part one has to tag information embedded in
+vertical bars as code.
+
+  #<Subroutines#>=
+    sub normalize_text_line {
+      my StringType $line = shift;
+      my StringType $tags;
+
+      $line =~ s{\|([^\|]*)\|}{<CODE>$1</CODE>}g;
+      return $line;
+    }
+
+
+# The output interpretation is straightforward (as explained when
+introducing the HTML-FSA). It merely consists of replacing the symbols
+in |$output| by the appropriate expansions. The mapping is done with a
+hash called |%FSA_output_to_expanded_output|.
+
+  #<Put out FSA output#>=
+    {
+      my CharType $character;
+      my StringType $expanded_output;
+
+      $FSA_output_to_expanded_output{"#"} = $line;
+      for $character (split("", $output)) {
+	$expanded_output .= $FSA_output_to_expanded_output{$character};
+      } #endfor
+      if ($expanded_output ne "") {
+	PUT_OUT($expanded_output);
+      } #endif
+    }
+
+
+# For convenience the mapping from FSA output to real (expanded) output is
+encoded in a hash array.
+
+  #<Global v...#>=
+    my StringMapType %FSA_output_to_expanded_output =
+      (
+	"C"=>"<PRE>", "c"=>"</PRE>", "I"=>"<P>", "i"=>"</P>", "P"=>"<P>",
+	"p"=>"</P>", "U"=>"<UL>", "u"=>"</UL>", "L"=>"<LI>", "l"=>"</LI>",
+	"|"=>"\n", "#"=>undef,
+      );
+
+
+#*Putting out the list of modules. Finally all module names are put out
+together with the module numbers of definitions and applications.
+Numbers of definition modules are specially rendered to distinguish
+them from applications.
+
+  #d EMPHASIZE(x)="<EM>".x."</EM>"
+
+  #<Put out list of m...#>=
+    {
+      my StringType $module_name;
+      my StringListType @modules;
+
+      PUT_OUT("<UL>");
+      @modules=m2s_give_modules();
+      for $module_name (@modules) {
+	my StringListType @module_numbers;
+
+	@module_numbers=m2s_give_module_numbers($module_name);
+	grep { if ($ARG<0) { $ARG=EMPHASIZE(-$ARG); }} @module_numbers;
+	$module_name=normalize_text_line(normalize_for_HTML($module_name));
+	PUT_OUT("<LI>$module_name: ". join(", ", @module_numbers));
+      } #endfor
+      PUT_OUT("</UL>");
+    }
+
+
+#*Final output.
+Finally the output accumulated in |@output_line_list| is directed to
+STDOUT.
+
+  #<Put out lines in...#>=
+    {
+      my StringType $line;
+
+      for $line (@output_line_list) {
+	print $line."\n";
+      } #endfor
+    }
+
+
+#*Debugging output.
+When the program is in debugging mode, the contents of internal tables are
+put out to |STDOUT|. The most important table is the mapping of module
+names to module numbers by tables |%module_to_module_number_map| and
+|%extension_module|.
+
+  #<Print internal...#>=
+    {
+      my StringType $module_name;
+      my StringListType @modules;
+
+      @modules=m2s_give_modules();
+      for $module_name (@modules) {
+	my StringListType @module_numbers;
+
+	@module_numbers=join(", ", m2s_give_module_numbers($module_name));
+	print("$module_name: @module_numbers\n");
+      } #endfor
+    }
+
+
+#*Index.

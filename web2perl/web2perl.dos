@@ -1,0 +1,14 @@
+Change file for DOS.
+
+Most changes handle incompatibilities when declaring hashes or semantic
+errors in the PERL-DOS version
+
+============================================================
+
+x
+    my BooleanType $debugging_is_active=$FALSE;
+y
+    my BooleanType $debugging_is_active=$TRUE;
+z
+
+============================================================

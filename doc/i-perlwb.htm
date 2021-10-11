@@ -1,0 +1,807 @@
+<HTML>
+<HEAD><TITLE>Documentation for PerlWEB</TITLE></HEAD>
+<BODY>
+<CENTER>
+  <H1>PerlWEB -- Literate Programming for PERL</H1>
+  <P>Version 1.01, August 1997</P>
+  <P>Author: Dr. Thomas Tensi, Am Rothenanger 24b, D-85521 Riemerling,
+     tt@sdm.de</P>
+</CENTER>
+
+<B>This documentation is a variation of the CWEB Manual (&copy; 1987,
+1990 by Silvio Levy and Donald E. Knuth) for Perl and HTML.</B>
+
+<P>The document describes a version of Don Knuth's WEB system, adapted to
+Perl by Thomas Tensi.  Knuth's original Pascal programs have been
+reimplemented in Perl to take advantage of features offered by
+Perl.</P>
+
+<P>Readers who are familiar with Knuth's memo "The WEB System of Structured
+Documentation" will be able to skim this material rapidly, because PerlWEB is
+essentially a very much simplified subset of WEB. PerlWEB does not need WEB's
+features for macro definition, because it uses a C preprocessor instead to take
+care of macros. Similarly, the WEB conventions of denoting octal and
+hexadecimal constants by @'77 and @"3f are omitted. Since PerlWEB does no
+prettyprinting of code parts a lot of WEB notations can also be thrown out.
+Many other features of WEB have nevertheless been retained.</P>
+
+
+<H1>Introduction</H1>
+
+<P>The philosophy behind WEB is that an experienced system programmer, who
+wants to provide the best possible documentation of software products,
+needs two things simultaneously:  a language for formatting (like TeX or
+HTML), and a language like Perl for programming. Neither type of language
+can provide the best documentation by itself. But when both are
+appropriately combined, we obtain a system that is much more useful than
+either language separately.</P>
+
+<P>The structure of a software program may be thought of as a "web" that is
+made up of many interconnected pieces. To document such a program, we want to
+explain each individual part of the web and how it relates to its neighbors.
+The typographic tools provided by the formatiing language give us an
+opportunity to explain the local structure of each part by making that
+structure visible, and the programming tools provided by \Cee\ make it possible
+for us to specify the algorithms formally and unambiguously. By combining the
+two, we can develop a style of programming that maximizes our ability to
+perceive the structure of a complex piece of software, and at the same time the
+documented programs can be mechanically translated into a working software
+system that matches the documentation.</P>
+
+<P>The WEB system consists of two programs named w2h and w2p. When writing
+a PerlWEB program the user keeps the Perl code and the documentation in the
+same file, called the WEB file and generally named <TT>something.web</TT>.
+The command `<TT>w2h something.web -o something.htm</TT>' creates an output
+file <TT>something.htm</TT>, which can then be fed to some HTML browser,
+yielding a ``pretty printed'' version of <TT>something.web</TT>. The
+typeset output also includes extensive cross-index information and
+hyperlinking that is gathered automatically.  Similarly, if you run the
+command `<TT>w2p something.web -o something.prl</TT>' you will get a Perl
+file <TT>something.prl</TT>, with can then run through Perl.</P>
+
+<P>Besides providing a documentation tool, WEB enhances the Perl language
+by providing the ability to permute pieces of the program text, so that a
+large system can be understood entirely in terms of small modules and their
+local interrelationships.  The w2p program takes a given web and moves the
+modules from their web structure into the order required by Perl; the
+advantage of programming in WEB is that the algorithms can be expressed in
+a form where each module is explained separately.  The w2h program
+takes a given web and intertwines the documentation and Perl portions
+contained in each module.</P>
+
+<P>A user of WEB should be fairly familiar with the Perl programming
+language.  A minimal amount of acquaintance with HTML is also desirable, but
+in fact it can be acquired as one uses WEB, since straight text can be
+typeset with virtually no knowledge of that language.  To someone
+familiar with both Perl and HTML the amount of effort necessary to learn the
+commands of WEB is small.</P>
+
+<H1>The language</H1>
+
+<P>Two kinds of material go into WEB files: HTML text and Perl text. A
+programmer writing in WEB should be thinking both of the documentation and
+of the Perl program being created; i.e., the programmer should be
+instinctively aware of the different actions that w2h and w2p will perform
+on the WEB file. HTML text is essentially copied without change by w2h, and
+it is entirely deleted by w2p; the HTML text is "pure documentation". Perl
+text is shuffled around by w2p, according to rules that will become clear
+later, and essentially kept untouched by w2h. For now the important point
+to keep in mind is that there are two kinds of text. Writing WEB programs
+is something like writing HTML documents, but with an additional "Perl
+mode" that is added to HTML.</P>
+
+<P>A WEB file is built up from units called <EM>modules</EM> that are more
+or less self-contained.  Each module has three parts:</P>
+<OL>
+  <LI>A HTML part, containing explanatory material about what is going on in
+      the module.</LI>
+  <LI>A definition part, containing macro definitions that serve as
+      abbreviations for Perl constructions that would be less comprehensible
+      if written out in full each time. They are turned by w2p into
+      preprocessor macro definitions.</LI>
+  <LI>A Perl part, containing a piece of the program that
+      w2p will produce. This Perl code should ideally be about a
+      dozen lines long, so that it is easily comprehensible as a unit and so
+      that its structure is readily perceived.</LI>
+</OL>
+
+<P>The three parts of each module must appear in this order; i.e., the HTML
+commentary must come first, then the definitions, and finally the Perl code.
+Any of the parts may be empty.</P>
+
+<P>A module begins with either of the symbols `<TT>#_</TT>' or `<TT>#*</TT>',
+where `<TT>_</TT>' denotes a blank space. A module ends at the beginning of the
+next module (i.e., at the next `<TT>#_</TT>' or `<TT>#*</TT>'), or at the end
+of the file, whichever comes first. The WEB file may also contain material that
+is not part of any module at all, namely the text (if any) that occurs before
+the first module. Such text is said to be ``in limbo''; it is ignored by w2p
+and w2h, so its function is to provide comments.
+</P>
+
+<P> Modules are numbered consecutively, starting with 1. These numbers appear
+at the beginning of each module of the HTML documentation output by w2h, and
+they appear as bracketed comments at the beginning and end of the code
+generated by that module in the Perl program output by w2p. </P>
+
+<P> Fortunately, you never mention these numbers yourself when you are writing
+in WEB. You just say `<TT>#_</TT>' or `<TT>#*</TT>' at the beginning of each
+new module, and the numbers are supplied automatically by w2h and w2p. As far
+as you are concerned, a module has a <EM>name</EM> instead of a number; its
+name is specified by writing `<TT>#&lt;</TT>' followed by HTML text followed by
+`<TT>#&gt;</TT>'. When w2h outputs a module name, it replaces the
+`<TT>#&lt;</TT>' and `<TT>#&gt;</TT>' by angle brackets and inserts the module
+number in small type. Thus, when you read the output of w2h it is easy to
+locate any module that is referred to in another module. This number is also a
+hyperlink anchored at the first definition of this module.</P>
+
+<P> For expository purposes, a module name should be a good description of the
+contents of that module; i.e., it should stand for the abstraction represented
+by the module. Then the module can be ``plugged into'' one or more other
+modules in such a way that unimportant details of its inner workings are
+suppressed.  A module name therefore ought to be long enough to convey the
+necessary meaning. Unfortunately, however, it is laborious to type such long
+names over and over again, and it is also difficult to specify a long name
+twice in exactly the same way so that w2h and w2p will be able to match the
+names to the modules. To ameliorate this difficulty, w2h and w2p let you
+abbreviate a module name after its first appearance in the WEB file; you can
+type simply `<TT>#&lt;&micro;...#&gt;</TT>', where &micro; is any string that
+is a prefix of exactly one module name appearing in the file. For example,
+`<TT>#&lt;Clear the arrays#&gt;</TT>' can be abbreviated to
+`<TT>#&lt;Clear...#&gt;</TT>' if no other module name begins with the five
+letters `<TT>Clear</TT>'. Module names must otherwise match character for
+character, except that consecutive blank spaces and/or tab marks are treated as
+equivalent to single spaces, and such spaces are deleted at the beginning and
+end of the name. Thus, `<TT>#&lt; Clear&nbsp;&nbsp; the arrays #&gt;</TT>' will also
+match the name in the previous example. </P>
+
+<P> We have said that a module begins with `<TT>#_</TT>' or `<TT>#*</TT>', but
+we didn't say how it gets divided up into a HTML part, a definition part, and a
+Perl part. The definition part begins with the first appearance of
+`<TT>#d</TT>' in the module, and the Perl part begins with the first appearance
+of `<TT>#p</TT>' or `<TT>#&lt;</TT>'. The latter option `<TT>#&lt;</TT>' stands
+for the beginning of a module name, which is the name of the module itself. An
+equals sign (=) must follow the `<TT>#&gt;</TT>' at the end of this module
+name; you are saying, in effect, that the module name stands for the Perl text
+that follows, so you say `&lt;module name&gt;=Perl text'. Alternatively, if the
+Perl part begins with `<TT>#p</TT>' instead of a module name, the current
+module is said to be <EM>unnamed</EM>. Note that module names cannot appear in
+the definition part of a module, because the first `<TT>#&lt;</TT>' in a module
+signals the beginning of its Perl part.  But any number of module names might
+appear in the Perl part, once it has started. </P>
+
+<P> The general idea of w2p is to make a Perl program out of these modules in
+the following way:
+<A NAME="Macro definitions"></A>First all the macro definitions indicated by
+`<TT>#d</TT>' are turned into preprocessor macro definitions and copied at the
+beginning. Then the Perl parts of unnamed modules are copied down, in order;
+this constitutes the initial approximation T<SUB>0</SUB> to the text of the
+program. (There should be at least one unnamed module, otherwise there will be
+no program.) Then all module names that appear in the initial text
+T<SUB>0</SUB> are replaced by the Perl parts of the corresponding modules, and
+this substitution process continues until no module names remain. All comments
+are removed, because the Perl program is intended only for the eyes of the Perl
+compiler. </P>
+
+<P> If the same name has been given to more than one module, the Perl text for
+that name is obtained by putting together all of the Perl parts in the
+corresponding modules. This feature is useful, for example, in a module named
+`Global variables in the outer block', since one can then declare global
+variables in whatever modules those variables are introduced. When several
+modules have the same name, w2h assigns the first module number as the number
+corresponding to that name and hyperlinks the other from the module
+name of the first section telling the reader that there are some other
+extension modules.</P>
+
+<P> The general idea of w2h is to make a <TT>HTML</TT> file from the WEB
+file in the following way: Each module is output in turn, possibly
+interspersed with delimiters between modules.  The text parts are
+formatted, the code parts are taken as is. Finally, w2h will generate a
+cross-reference index that is an alphabetized list of the module names, as
+well as a table of contents that shows the module numbers for each
+``starred'' module. </P>
+
+<P> What is a ``starred'' module, you ask? A module that begins with
+`<TT>#*</TT>' instead of `<TT>#_</TT>' is slightly special in that it denotes a
+new major group of modules. The `<TT>#*</TT>' should be followed by the title
+of this group, followed by a period. Such modules will always start with a
+thick horizontal line in the HTML output. The title will also appear in the
+table of contents, and in boldface type at the beginning of its module.</P>
+
+<P> The HTML output produced by w2h for each module consists of the following:
+First comes the module number (e.g., `<TT>123.</TT>' at the beginning of module
+123, except that a thick horizontal rule is inserted at the beginning of a
+starred module). Then comes the text part of the module, copied almost verbatim
+except as noted below. Then comes the definition part and the Perl part,
+formatted so that there will be a little extra space between them if both are
+nonempty. The definition and Perl parts are copied as is apart from the fact
+that they are set in a special font. </P>
+
+<P> When you are typing the text part, you will probably want to make frequent
+reference to variables and other quantities in your Perl code, and you will
+want those variables to have the same typographic treatment when they appear in
+your text as when they appear in your program.  Therefore the PerlWEB language
+allows you to get the effect of Perl editing within the text part, if you place
+| marks before and after the Perl material. For example, suppose you want
+to say something like this: </P>
+
+  <BLOCKQUOTE>If <TT>$p</TT> is assigned a reference as in <TT>$p=\@var</TT>,
+  then <TT>$p-&gt;[0]</TT> denotes the first element of <TT>@var</TT>.
+  </BLOCKQUOTE>
+
+<P>The text part would look like this in your PerlWEB file: </P>
+
+  <BLOCKQUOTE><TT>If |$p| is assigned a reference as in |$p=\@var|,
+  then |$p-&gt;[0]| denotes the first element of |@var|.</TT>
+  </BLOCKQUOTE>
+
+<P> And w2h translates this into something you are glad
+you didn't have to type: </P>
+  <BLOCKQUOTE><TT>If &lt;tt&gt;$p&lt;/tt&gt; is assigned a reference as in
+  &lt;tt&gt;$p=\@var&lt;/tt&gt;, then &lt;tt&gt;$p-&amp;gt;[0]&lt;/tt&gt;
+  denotes the first element of &lt;tt&gt;@var&lt;/tt&gt;.</TT>
+  </BLOCKQUOTE>
+
+
+<H1>Macros</H1>
+
+<P>The control code <TT>#d</TT> followed by <TT>identifier=Perl text</TT> or by
+<TT>identifier(par<SUB>1</SUB>,...,par<SUB>n</SUB>)=Perl text</TT> (where there
+may not be any white space between the <TT>identifier</TT> and the parentheses
+in the second case) is transformed by w2p into a preprocessor command, starting
+with <TT>#define</TT>, which is printed at the top of the Perl output file as
+explained <A HREF="#Macro definitions">earlier</A>.</P>
+
+<P> A <TT>`#d'</TT> macro definition can go on for several lines, and the
+newlines don't have to be protected by backslashes, since w2p itself inserts
+the backslashes.  If for any reason you need a <TT>#define</TT> command at a
+specific spot in your Perl file, you can treat it as Perl code, instead of as a
+PerlWEB macro; but then you do have to protect newlines yourself. </P>
+
+
+<H1>Control codes</H1>
+
+<P> A PerlWEB <EM>control code</EM> is a two-character combination of which the
+first is `#'. We've already seen the meaning of several control codes; here is
+a complete list of all of them. </P>
+
+<P> The letters L, T, P and/or M following each code indicate whether or not
+that code is allowable in limbo, in HTML text, in Perl text and/or in module
+names.  A slash before such a letter means that the control code terminates the
+present part of the WEB file; for example, /L means that this control code ends
+the limbo material before the first module. Any other text in brackets will be
+explained in the paragraph following.</P>
+
+<DL COMPACT>
+  <DT>#_ [/L,/P,/T]</DT>
+  <DD>
+    <P> This denotes the beginning of a new (unstarred) module. A tab mark
+    or form feed or end-of-line character is equivalent to a space when it
+    follows an # sign (and in most other cases).</P>
+  </DD>
+
+  <DT>#* [/L,/P,/T]</DT>
+  <DD>
+    <P> This denotes the beginning of a new starred module, i.e., a module
+    that begins a new major group. The title of the new group should appear
+    after the <TT>#*</TT>, followed by a period. HTML control sequences should
+    be avoided in such titles unless they are quite simple. The very first
+    module should be starred.</P>
+  </DD>
+
+  <DT>#d [/P,/T]</DT>
+  <DD>
+    <P> Macro definitions begin with <TT>#d</TT> (or <TT>#D</TT>), followed
+    by an identifier and optional parameters and Perl text as explained
+    earlier.</P>
+  </DD>
+
+  <DT>#p [/P,/T]</DT>
+  <DD>
+    <P> The Perl part of an unnamed module begins with <TT>#p</TT> (or
+    <TT>#P</TT>). This causes w2p to append the following Perl code to the
+    initial program text T<SUB>0</SUB> as explained above.</P>
+
+    <P> Because of the rules by which every module is broken into three
+    parts, the control codes `<TT>#d</TT>' and `<TT>#p</TT>' are not
+    allowed to occur once the Perl part of a module has begun.</P>
+  </DD>
+
+  <DT>#&lt; [P,/T]</DT>
+  <DD>
+    <P> A module name begins with <TT>#&lt;</TT> followed by text
+    followed by <TT>#&gt;</TT>. The module name may be abbreviated, after its
+    first appearance in a WEB file, by giving any unique prefix followed by
+    <TT>...</TT>, where the three dots immediately precede the closing
+    <TT>#&gt;</TT>. Module names may not appear in Perl text that is enclosed
+    in |, nor may they appear in the definition part of a module (since the
+    appearance of a module name ends the definition part and begins the Perl
+    part).</P>
+  </DD>
+
+  <DT>#x #y #z [<TT>change_file</TT>]</DT>
+  <DD>
+    <P> w2h and w2p are designed to work with two input files, called
+    <TT>web_file</TT> and <TT>change_file</TT>, where <TT>change_file</TT>
+    contains data that overrides selected portions of <TT>web_file</TT>. The
+    resulting merged text is actually what has been called the WEB file
+    elsewhere in this report.</P>
+
+    <P>Here's how it works: The change file consists of zero or more
+    ``changes,'' where a change has the form</P>
+    <PRE>
+    #x
+      old lines
+      ...
+    #y
+      new lines
+      ...
+    #z
+    </PRE>
+
+    <P> The special control codes <TT>#x</TT>, <TT>#y</TT>, <TT>#z</TT>,
+    which are allowed only in change files, must appear at the beginning of
+    a line; the remainder of such a line is ignored. The &lt;old lines&gt;
+    represent material that exactly matches consecutive lines of the
+    <TT>web_file</TT>; the &lt;new lines&gt; represent zero or more lines
+    that are supposed to replace the old. Whenever the first ``old line''
+    of a change is found to match a line in the <TT>web_file</TT>, all the
+    other lines in that change must match too.</P>
+
+    <P> Between changes, before the first change, and after the last
+    change, the change file can have any number of lines that do not begin
+    with `<TT>#x</TT>', `<TT>#y</TT>', or `<TT>#z</TT>'. Such lines are
+    bypassed and not used for matching purposes.</P>
+
+    <P> This dual-input feature is useful when working with a master WEB
+    file that has been received from elsewhere (e.g., <TT>web2html.web</TT>
+    or <TT>web2perl.web</TT>), when changes are desirable to customize the
+    program for your local computer system. You will be able to debug your
+    system-dependent changes without clobbering the master web file; and
+    once your changes are working, you will be able to incorporate them
+    readily into new releases of the master web file that you might receive
+    from time to time.</P>
+  </DD>
+
+  <DT>#i [<TT>web_file</TT>]</DT>
+  <DD>
+    <P> Furthermore the <TT>web_file</TT> itself can be a combination of
+    several files.  When either <TT>w2h</TT> or <TT>w2p</TT> is reading a
+    file and encounters the control code <TT>#i</TT> at the beginning of a
+    line, it interrupts normal reading and start looking at the file named
+    after the <TT>#i</TT>, much as the C preprocessor does when it
+    encounters an <TT>#include</TT> line.  After the included file has been
+    entirely read, the program goes back to the next line of the original
+    file.  The file name following <TT>#i</TT> must be surrounded by "
+    characters. Include files can nest. Change files cannot use the
+    <TT>#i</TT> feature.</P>
+  </DD>
+</DL>
+
+
+<H1>Running the programs</H1>
+
+<P>The UNIX and DOS command line for <TT>w2p</TT> is</P>
+  <BLOCKQUOTE>
+    <TT>w2p web_file.web [ change_file.ch ] [ -o outfile ]</TT>
+  </BLOCKQUOTE>
+<P>and the same conventions apply to <TT>w2h</TT>:</P>
+  <BLOCKQUOTE>
+    <TT>w2h web_file.web [ change_file.ch ] [ -o outfile ]</TT>
+  </BLOCKQUOTE>
+
+<P>If no outfile is given output goes either to STDOUT (in UNIX) or to
+junk.prl for w2p or junk.htm for w2h (in DOS). If no change file is
+specified, the change file is null (i.e. no changes are
+incorporated...).</P>
+
+
+<H1>Installation</H1>
+
+<P>The PerlWEB-distribution contains:</P>
+<TABLE>
+  <TR><TD>-</TD><TD>w2p:</TD><TD>UNIX shell script for converting PerlWEB to
+    Perl;</TD></TR>
+  <TR><TD>-</TD><TD>w2p.bat:</TD><TD>DOS shell script for converting PerlWEB
+    to Perl;</TD></TR>
+  <TR><TD>-</TD><TD>w2h:</TD><TD>UNIX shell script for converting PerlWEB to
+    HTML;</TD></TR>
+  <TR><TD>-</TD><TD>w2h.bat:</TD><TD>DOS shell script for converting PerlWEB to HTML;</TD></TR>
+  <TR><TD>-</TD><TD>web2perl.prl:</TD><TD>Perl program for converting PerlWEB to Perl;</TD></TR>
+  <TR><TD>-</TD><TD>web2html.prl:</TD><TD>Perl program for converting PerlWEB to HTML;</TD></TR>
+  <TR><TD>-</TD><TD>striplin.prl:</TD><TD>supporting Perl programm;</TD></TR>
+  <TR><TD>-</TD><TD>perlbeau.prl:</TD><TD>supporting Perl programm (Perl beautifier);</TD></TR>
+  <TR><TD>-</TD><TD>web2perl/web2perl.web:</TD><TD>PerlWEB program for converting PerlWEB to
+    Perl;</TD></TR>
+  <TR><TD>-</TD><TD>web2perl/web2perl.dos:</TD><TD>change file for web2perl.web to adapt it to DOS
+    peculiarities;</TD></TR>
+  <TR><TD>-</TD><TD>web2html/web2html.web:</TD><TD>PerlWEB program for converting PerlWEB to
+    HTML;</TD></TR>
+  <TR><TD>-</TD><TD>web2html/web2html.dos:</TD><TD>change file for web2html.web to adapt it to DOS
+    peculiarities;</TD></TR>
+  <TR><TD>-</TD><TD>includes/general.web:</TD><TD>include file to introduce some general concepts
+    into PerlWEB programs;</TD></TR>
+  <TR><TD>-</TD><TD>includes/web2xxx.web:</TD><TD>common part for web2html.web and web2perl.web;</TD></TR>
+  <TR><TD>-</TD><TD>doc/perlweb.htm:</TD><TD>this documentation;</TD></TR>
+</TABLE>
+
+<P>To install the distribution on your system you have to do the following
+</P><OL>
+  <LI>Expand the ZIP-file in some directory (DOS) or unzip and untar the
+    Unix archive.</LI>
+  <LI>Put all Perl programs in some directory where they can be located by
+    Perl.</LI>
+  <LI>The script files must be put in some directory on the path of the
+    shell (in UNIX) or COMMAND.COM (in DOS).
+  <LI>Make sure that Perl (version 5) is accessible. The DOS version
+    additionally needs a C preprocessor PERLCPP which must be in the DOS
+    path.</LI>
+</OL>
+
+<P>After that installation PerlWEB is functional.</P>
+
+<P>The original files web2perl.web and web2perl.dos together with DOS
+change files and necessary include files (general.web, web2xxx.web) are
+also included in the distribution. Whenever code has to be changed, don't
+do it in the Perl files...</P>
+
+
+<H1>Acknowledgments by the original authors</H1>
+
+<P>The authors Knuth and Levy wish to thank all who contributed suggestions
+and criticism to the development of <TT>CWEB</TT>. They are especially
+grateful to Norman Ramsey, from whom the code for multiple output files is
+borrowed, and who has made literate programming accessible to users of yet
+other languages by means of his <TT>SPIDER</TT> system [see
+<EM>Communications of the ACM, 32 (1989), 1051-1055</EM>].</P>
+
+
+<H1>Acknowledgments</H1>
+
+<P>The author thanks Johannes Berger for correction and valuable comments on
+PerlWEB and the PerlWEB programs w2p and w2h.</P>
+
+
+<H1>Appendices</H1>
+
+The basic ideas of PerlWEB can be understood most easily by looking at
+examples of ``real'' programs. Appendix A shows the <TT>PerlWEB</TT> input that
+generated some modules of the <TT>web2xxx.web</TT> file, which contains
+routines common to <TT>w2p</TT> and <TT>w2h</TT>. 
+Appendix B shows the corresponding Perl code output by <TT>w2p</TT>.
+Appendix C shows the corresponding HTML code output by <TT>w2h</TT>,
+and Appendix D shows how that output looks when printed out.
+
+<H1>Appendix A -- File format</H1>
+
+<P>The following is an excerpt of the file web2xxx.web, which contains
+routines shared by w2p and w2h. Note that some of the lines are indented to
+show the program structure. The indentation is ignored by w2p, but users
+may find that PerlWEB files are quite readable if they have some such
+indentation. Besides this indentation is directly used by w2h.</P>
+
+<P>The reader should first compare Appendix A to Appendix B; then the
+same material should be compared to Appendices C and D.</P>
+
+<HR>
+<PRE>
+#*Process change file.
+Pass 2 traverses all the lines read and checks a change file for any
+substitutions necessary to adapt a master WEB file to a specific
+environment.
+
+  #&lt;Process change file#&gt;=
+    {
+      local *changefile_handle;
+
+      #&lt;Open change file into |changefile_handle|; abort on failure#&gt;
+      #&lt;Traverse change file and update |@input_line_list|#&gt;
+
+      close(changefile_handle);
+    }
+
+    
+# The change file is opened via the |$change_file_name| given. The file
+handle is returned in |changefile_handle|. If anything unexpected happens,
+the program is stopped.
+
+  #&lt;Open change file...#&gt;=
+    {
+      my BooleanType $success=open(changefile_handle, $change_file_name);
+      if (!$success) {
+	fatal_error("web2perl: cannot open change file $change_file_name: $!");
+      } #endif
+    }
+      
+
+# The change file is read line by line. In principle the change file
+consists of substitutions embedded in #x#y#z lines. The #x and #y lines
+brackets a sequence of lines which have to be exactly matched in the input
+file. The lines bracketed by #y and #z are the replacement for the lines
+matched. All other lines are not significant and can be used for comments.
+
+Another important point is that the sequence of substitutions must be
+applied in order; thus the input file can be traversed sequentially.
+
+
+# The change file is read sequentially and parsed by a finite automaton.
+Whenever a #x, #y, or #z line is found a transition to the next state
+occurs. There are four states, which form - more or less - a cyclic state
+sequence. When parsing a substitution on the change file, the program first
+tries to find matching lines in |@input_line_list|. The indices are stored
+in |$first_line_number| and |$last_line_number|. The replacement text is
+accumulated in |@changed_input_line_list|. After the #z has been parsed, the
+substitution is carried out on |@input_line_list|.
+
+If the change file ends prematurely, an appropriate error message is given.
+
+  #&lt;Traverse change file...#&gt;=
+    {
+      my StringListType @changed_input_line_list;
+      my CardinalType $first_line_number=FIRST_INDEX;
+      my StringType $line;
+      my CardinalType $scan_mode=0;
+
+      while ($line=&lt;changefile_handle&gt;) {
+        ## kick out NEWLINE
+        $line=~s/\r?\n$//;
+	if ($line =~ "^[$WEB_escape_char]([xyz])") {
+	  #&lt;Process change file entry#&gt;
+	  if ($scan_mode&lt;4) {
+	    next;
+	  } #endif
+	}
+	#&lt;Handle changefile line according to |$scan_mode|#&gt;
+      } #endwhile
+      if ($scan_mode&gt;0) {
+        warning("unexpected eof in change file");
+      } #endif
+    }
+</PRE>
+<HR>
+
+<H1>Appendix B -- Translation by w2p</H1>
+
+<P> Here's the portion of the Perl code generated by w2p that corresponds
+to Appendix A.  Notice that modules 26 and 28 have been tangled into module
+25. </P>
+
+<P> Note that parts not described in Appendix A have been replaced by
+''[...]''. The tools will give error messages whenever referenced modules
+are not defined in a WEB file.
+</P>
+
+<HR>
+<PRE>
+    {
+      local *changefile_handle;
+
+      {
+        my  $success=open(changefile_handle, $change_file_name);
+        if (!$success) {
+          fatal_error("web2perl: cannot open change file $change_file_name: $!");
+        } #endif
+      }
+
+      {
+        @changed_input_line_list;
+        my  $first_line_number=$[;
+        my  $line;
+        my  $scan_mode=0;
+
+        while ($line=&lt;changefile_handle&gt;) {
+          $line=~s/\r?\n$//;
+          if ($line =~ "^[$WEB_escape_char]([xyz])") {
+	    [...]
+
+            if ($scan_mode<4) {
+              next;
+            } #endif
+          }
+	  [...]
+        } #endwhile
+        if ($scan_mode>0) {
+          warning("unexpected eof in change file");
+        } #endif
+      }
+
+      close(changefile_handle);
+    }
+</PRE>
+<HR>
+
+
+<H1>Appendix C -- Translation by w2h</H1>
+
+<P>w2h translates a WEB file into a HTML text with the following
+properties:</P>
+
+<UL>
+  <LI>Each section in the PerlWEB program gets a unique number.</LI>
+  <LI>The documentation parts of a PerlWEB section are taken as HTML
+    paragraphs. Whenever a blank line separates two lines, a new paragraph is
+    started. Lines starting with a minus are taken as lines from an unordered
+    list.</LI>
+  <LI>The definition and code part of a section is set in a special font as is.
+    The module names in module applications are completely expanded.
+    Additionally they have the section number appended where the corresponding
+    module definition can be found. For navigation there is also a hyperlink
+    to this section.</LI>
+  <LI>Subroutines are handled similarly.</LI>
+  <LI>Finally a lexically sorted list of all module names with definitions and
+    applications is appended.</LI>
+</UL>
+
+<HR>
+<PRE>
+&lt;P&gt;&lt;A NAME="section_25"&gt;&lt;B&gt;25. Process change file.&lt;/B&gt;&lt;/A&gt;
+Pass 2 traverses all the lines read and checks a change file for any
+substitutions necessary to adapt a master WEB file to a specific
+environment.
+&lt;/P&gt;
+
+&lt;PRE&gt;
+  &amp;lt;&amp;lt;Process change file&amp;gt;&amp;gt; =
+    {
+      local *changefile_handle;
+      &amp;lt;&amp;lt;Open change file into |changefile_handle|; abort on failure&amp;gt;&amp;gt;&lt;a href="#section_26"&gt;&lt;SUB&gt;26&lt;/SUB&gt;&lt;/A&gt;
+      &amp;lt;&amp;lt;Traverse change file and update |@input_line_list|&amp;gt;&amp;gt;&lt;A HREF="#section_28"&gt;&lt;SUB&gt;28&lt;/SUB&gt;&lt;/A&gt;
+      close(changefile_handle);
+    }
+    
+&lt;/PRE&gt;
+&lt;P&gt;&lt;A NAME="section_26"&gt;&lt;HR NOSHADE&gt;26. &lt;/A&gt;The change file is opened via the &lt;CODE&gt;$change_file_name&lt;/CODE&gt; given. The file
+handle is returned in &lt;CODE&gt;changefile_handle&lt;/CODE&gt;. If anything unexpected happens,
+the program is stopped.
+&lt;/P&gt;
+
+&lt;PRE&gt;
+  &amp;lt;&amp;lt;Open change file into |changefile_handle|; abort on failure&amp;gt;&amp;gt; =
+    {
+      my BooleanType $success=open(changefile_handle, $change_file_name);
+      if (!$success) {
+	fatal_error&lt;SUB&gt;14&lt;/SUB&gt;("web2perl: cannot open change file $change_file_name: $!");
+      } #endif
+    }
+      
+&lt;/PRE&gt;
+&lt;P&gt;&lt;A NAME="section_27"&gt;&lt;HR NOSHADE&gt;27. &lt;/A&gt;The change file is read line by line. In principle the change file
+consists of substitutions embedded in #x#y#z lines. The #x and #y lines
+brackets a sequence of lines which have to be exactly matched in the input
+file. The lines bracketed by #y and #z are the replacement for the lines
+matched. All other lines are not significant and can be used for comments.
+&lt;/P&gt;
+
+&lt;P&gt;Another important point is that the sequence of substitutions must be
+applied in order; thus the input file can be traversed sequentially.
+&lt;/P&gt;
+
+&lt;P&gt;&lt;A NAME="section_28"&gt;&lt;HR NOSHADE&gt;28. &lt;/A&gt;The change file is read sequentially and parsed by a finite automaton.
+Whenever a #x, #y, or #z line is found a transition to the next state
+occurs. There are four states, which form - more or less - a cyclic state
+sequence. When parsing a substitution on the change file, the program first
+tries to find matching lines in &lt;CODE&gt;@input_line_list&lt;/CODE&gt;. The indices are stored
+in &lt;CODE&gt;$first_line_number&lt;/CODE&gt; and &lt;CODE&gt;$last_line_number&lt;/CODE&gt;. The replacement text is
+accumulated in &lt;CODE&gt;@changed_input_line_list&lt;/CODE&gt;. After the #z has been parsed, the
+substitution is carried out on &lt;CODE&gt;@input_line_list&lt;/CODE&gt;.
+&lt;/P&gt;
+
+&lt;P&gt;If the change file ends prematurely, an appropriate error message is given.
+&lt;/P&gt;
+
+&lt;PRE&gt;
+  &amp;lt;&amp;lt;Traverse change file and update |@input_line_list|&amp;gt;&amp;gt; =
+    {
+      my StringListType @changed_input_line_list;
+      my CardinalType $first_line_number=FIRST_INDEX;
+      my StringType $line;
+      my CardinalType $scan_mode=0;
+      while ($line=&lt;changefile_handle&gt;) {
+        ## kick out NEWLINE
+        $line=~s/\r?\n$//;
+	if ($line =~ "^[$WEB_escape_char]([xyz])") {
+	  &amp;lt;&amp;lt;Process change file entry&amp;gt;&amp;gt;&lt;SUB&gt;30&lt;/SUB&gt;
+	  if ($scan_mode&lt;4) {
+	    next;
+	  } #endif
+	}
+	&amp;lt;&amp;lt;Handle changefile line according to |$scan_mode|&amp;gt;&amp;gt;&lt;SUB&gt;31&lt;/SUB&gt;
+      } #endwhile
+      if ($scan_mode&gt;0) {
+        warning&lt;SUB&gt;14&lt;/SUB&gt;("unexpected eof in change file");
+      } #endif
+    }
+&lt;/PRE&gt;
+</PRE>
+<HR>
+
+
+<H1>Appendix D -- The final document</H1>
+
+<P> The final document for looks like this (complete documents for
+<A HREF="/u/tt/dokument/perlweb/web2perl.html">web2perl.web</A> and
+<A HREF="/u/tt/dokument/perlweb/web2html.html">web2html.web</A> are also
+available):
+</P>
+
+<HR>
+<P><A NAME="section_25"><B>25. Process change file.</B></A>
+Pass 2 traverses all the lines read and checks a change file for any
+substitutions necessary to adapt a master WEB file to a specific
+environment.
+</P>
+
+<PRE>
+  &lt;&lt;Process change file&gt;&gt; =
+    {
+      local *changefile_handle;
+      &lt;&lt;Open change file into |changefile_handle|; abort on failure&gt;&gt;<a href="#section_26"><SUB>26</SUB></A>
+      &lt;&lt;Traverse change file and update |@input_line_list|&gt;&gt;<A HREF="#section_28"><SUB>28</SUB></A>
+      close(changefile_handle);
+    }
+    
+</PRE>
+<P><A NAME="section_26"><HR NOSHADE>26. </A>The change file is opened via the <CODE>$change_file_name</CODE> given. The file
+handle is returned in <CODE>changefile_handle</CODE>. If anything unexpected happens,
+the program is stopped.
+</P>
+
+<PRE>
+  &lt;&lt;Open change file into |changefile_handle|; abort on failure&gt;&gt; =
+    {
+      my BooleanType $success=open(changefile_handle, $change_file_name);
+      if (!$success) {
+	fatal_error<SUB>14</SUB>("web2perl: cannot open change file $change_file_name: $!");
+      } #endif
+    }
+      
+</PRE>
+<P><A NAME="section_27"><HR NOSHADE>27. </A>The change file is read line by line. In principle the change file
+consists of substitutions embedded in #x#y#z lines. The #x and #y lines
+brackets a sequence of lines which have to be exactly matched in the input
+file. The lines bracketed by #y and #z are the replacement for the lines
+matched. All other lines are not significant and can be used for comments.
+</P>
+
+<P>Another important point is that the sequence of substitutions must be
+applied in order; thus the input file can be traversed sequentially.
+</P>
+
+<P><A NAME="section_28"><HR NOSHADE>28. </A>The change file is read sequentially and parsed by a finite automaton.
+Whenever a #x, #y, or #z line is found a transition to the next state
+occurs. There are four states, which form - more or less - a cyclic state
+sequence. When parsing a substitution on the change file, the program first
+tries to find matching lines in <CODE>@input_line_list</CODE>. The indices are stored
+in <CODE>$first_line_number</CODE> and <CODE>$last_line_number</CODE>. The replacement text is
+accumulated in <CODE>@changed_input_line_list</CODE>. After the #z has been parsed, the
+substitution is carried out on <CODE>@input_line_list</CODE>.
+</P>
+
+<P>If the change file ends prematurely, an appropriate error message is given.
+</P>
+
+<PRE>
+  &lt;&lt;Traverse change file and update |@input_line_list|&gt;&gt; =
+    {
+      my StringListType @changed_input_line_list;
+      my CardinalType $first_line_number=FIRST_INDEX;
+      my StringType $line;
+      my CardinalType $scan_mode=0;
+      while ($line=&lt;changefile_handle&gt;) {
+        ## kick out NEWLINE
+        $line=~s/\r?\n$//;
+	if ($line =~ "^[$WEB_escape_char]([xyz])") {
+	  &lt;&lt;Process change file entry&gt;&gt;<SUB>30</SUB>
+	  if ($scan_mode&lt;4) {
+	    next;
+	  } #endif
+	}
+	&lt;&lt;Handle changefile line according to |$scan_mode|&gt;&gt;<SUB>31</SUB>
+      } #endwhile
+      if ($scan_mode&gt;0) {
+        warning<SUB>14</SUB>("unexpected eof in change file");
+      } #endif
+    }
+</PRE>
+<HR>
+</BODY></HTML>
+

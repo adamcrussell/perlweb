@@ -1,0 +1,390 @@
+#*Web2Perl -- Converter from PerlWEB to Perl. Developped
+by Thomas Tensi, 1996.
+
+The purpose of this program is to convert a PerlWEB program into a PERL
+file. As PerlWEB allows macro definitions the PERL file contains #define
+statements for a subsequent C macro processor.
+
+The resulting PERL file is not intended for human readers, hence there is
+no indentation; the code parts are copied from the PerlWEB file as is.
+
+
+#i includes/general.web
+
+
+# WebToPerl identifies itself with a banner line.
+
+  #<Const...#>=
+    const StringType $banner_line="web2perl Version 1.0, August 1997";
+
+
+#*Main Program.
+The WebToPerl filter consists of five passes:
+ - In pass 1 the PerlWEB source is read and any includes are resolved.
+ - In pass 2 the change file is read and any matching lines are replaced
+   by the appropriate substitutions.
+ - In pass 3 comment lines are removed from the input so that the
+   macro preprocessor following is not irritated...
+ - Pass 4 collects the module definitions and macros.
+ - In pass 5 the module definitions are expanded into one big Perl program.
+
+To check the correctness of the first four passes a debugging step might
+be introduced which prints out the internal tables accumulated so far. This
+printout only takes place when the constant |$debugging_is_active| is set.
+
+  #<Main program#>=
+    {
+      print STDERR "$banner_line\n";
+      #<Extract |$WEB_file_name| and |$change_file_name| from command line#>
+      #<Read WEB file and includes into |@input_line_list|#>
+      if ($change_file_name ne "") {
+	#<Process change file#>
+      } #endif
+      #<Remove comment lines from |@input_line_list|#>
+      #<Build expansion text list#>
+      if ($debugging_is_active) {
+        #<Print internal tables#>
+      } #endif
+      #<Put out macro definitions to |@output_line_list|#>
+      #<Expand unnamed module to |@output_line_list|#>
+      #<Put out lines in |@output_line_list|#>
+    }
+
+
+#i includes/web2xxx.web
+
+
+#*Comment line removal. As the macro preprocessor (which expands the macro
+definitions) might choke over lines starting with '#' all comment lines are
+removed from |@input_line_list|. They are indicated by a double # (to
+distinguish them from normal WEB escape lines).
+
+  #<Remove comment lines from |@input_line_list|#>=
+    {
+      my CardinalType $list_length;
+
+      $list_length=scalar(@input_line_list);
+      trace_start("removing comments");
+      @input_line_list=grep(($_ !~ "^[ \t]*##"),  @input_line_list);
+      trace_line($list_length);
+      trace_end();
+    }
+
+
+#*Build expansion texts. In pass 4 all macro definitions are sequentially
+put into |@macro_line_list|.
+
+  #<Global v...#>=
+    my StringListType @macro_line_list;
+
+
+# Another task within this pass is to find out the module names and to
+collect the definitions for them across all modules. All names found are
+stored in the module name list and the definitions in the hash of arrays
+|%module_lines|. The code lines within a module are collected in
+|@module_line_list| and then put into that associative table.
+
+  #<Global v...#>=
+    my StringListType %module_lines;
+
+
+# The collection of all the relevant lines is more or less an exercise in
+using a finite state automaton (with four states) on the line prefices.
+
+  #<Build expansion text list#>=
+    {
+      const CardinalType $undefined_state=0;
+      const CardinalType $in_text_state=1;
+      const CardinalType $in_def_state=2;
+      const CardinalType $in_code_state=3;
+
+      my CardinalType $counter=1;
+      my StringType $line;
+      my StringListType @module_line_list;
+      my StringType $module_name;
+      my CardinalType $state=$undefined_state;
+
+      trace_start("accumulating");
+      clear_module_name_list();
+      foreach $line (@input_line_list) {
+	trace_line();
+        SWITCH ($line) {
+          ## start of text
+          CASE(/^\s*[$WEB_escape_char][ \*]/) {
+	    #<Process text part of WEB#>
+            $state=$in_text_state;  ENDCASE;
+	  }
+          ## macro definition
+          CASE(/^\s*[$WEB_escape_char]d/) {
+  	    #<Process start of macro definition#>
+            $state=$in_def_state;  ENDCASE;
+	  }
+          ## start of module
+          CASE(/^\s*[$WEB_escape_char]p/ ||
+           /^\s*[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>\s*=$/) {
+	    if ($state==$in_code_state || $state==$undefined_state) {
+	      printf("module definition in wrong context (l.%d)\n%s\n",
+		$counter, $line);
+	    } #endif
+            #<Process start of module definition#>
+            $state = $in_code_state;  ENDCASE;
+	  }
+          ## normal line
+          CASE(/.*/) {
+            #<Process line with no tag#>
+	    ENDCASE;
+	  }
+        } #endswitch
+        $counter++;
+      } #endwhile
+      trace_end();
+    }
+
+
+# A special name is used for storing and accessing the lines which are not
+associated with a named module. Any name works which cannot occur. Here we
+have used a name consisting of a blank.
+
+  #<Constants d...#>=
+    const StringType $unnamed_module_name=" ";
+
+
+# Whenever a |# | or a |#*| is encountered, no action is necessary.
+
+  #<Process text part...#>=
+    do_nothing;
+
+
+# A macro definition is introduced by |#d|. Some minor cosmetical changes
+have to be done to |$line| convert the WEB notation to the notation used by
+the macro processor. The result is appended to |@macro_line_list|.
+
+  #<Process start of macro...#>=
+    {
+      $line =~ s/=/\t/;
+      $line =~ s/\s*[$WEB_escape_char]d/#define/;
+      push(@macro_line_list, $line);
+    }
+
+
+# The module definition part is introduced by |#p| or |#<|. Depending on the
+tag the module following is either unnamed or its name is given directly
+after the tag up to an |#>|.
+
+Slight complications occur when the module name is abbreviated: the
+complete expansion must be found.
+
+  #<Process start of module def...#>=
+    {
+      if ($line =~ /^\s*[$WEB_escape_char]\<(.*)[$WEB_escape_char]\>\s*=$/) {
+	$module_name=normalize_module_name($1);
+      } else {
+	$module_name=$unnamed_module_name;
+      } #endif
+      $module_name=store_or_lookup_name($module_name);
+    }
+
+
+# If a line is not tagged, it is part of the current module or of the
+limbo. If it is part of a module, it is either as a line of explanatory
+text, as a definition line or as a code line.
+
+As the program is tangling code, it doesn't care about explanatory texts or
+limbo material. In case of a definition the |@macro_line_list|, in case of
+a code line the list of lines for the current module name is extended by
+another line.
+
+In the latter case the program has to check if the line contains a module
+name. If this name is not abbreviated, it should be put into the module
+name list as there might be later abbreviations referring to it.
+
+  #<Process line with no tag#>=
+    {
+      if ($state==$undefined_state || $state==$in_text_state) {
+	do_nothing;
+      } elsif ($state==$in_def_state) {
+	my StringType $previous_line;
+        $previous_line=pop(@macro_line_list);
+        push(@macro_line_list, $previous_line."\\" , $line);
+      } elsif ($state==$in_code_state) {
+        @module_line_list=RETURN_ARRAY($module_lines{$module_name});
+        push(@module_line_list, $line);
+        $module_lines{$module_name}=NEWREF(@module_line_list);
+        if ($line =~ /$WEB_escape_char\<(.*)$WEB_escape_char\>/) {
+	  ## we found an application
+	  my StringType $referenced_module;
+   	  $referenced_module=normalize_module_name($1);
+	  if (!name_is_abbreviation($referenced_module)) {
+            insert_into_module_name_list($referenced_module);
+          } #endif
+	} #endif
+      } #endif
+    };
+
+
+#*Putting out the macro definitions. The macro definitions are lines in the
+|@macro_line_list| in a format fitting for the C preprocessor. Lines with
+continuation have been correctly suffixed with a backslash; hence only the
+|@macro_line_list| is put out.
+
+  #<Put out macro definitions...#>=
+    {
+      my StringType $line;
+
+      trace_start("macros",10);
+      foreach $line (@macro_line_list) {
+	trace_line();
+        push(@output_line_list, $line);
+      } #endforeach
+      trace_end();
+    }
+
+
+#*Expanding the unnamed module. The final pass goes through all lines in
+the unnamed module. If there is a line which is a reference to another
+module this line is expanded. Expansion continues until any module
+references in the unnamed module are themselves completely expanded and put
+out completely.
+
+The solution is of course recursive, but we have to take care to identify
+cyclic expansions. The simple idea is that whenever the expansion stack
+is larger than the number of modules there must be a cycle. This is not the
+earliest point where a cycle may be detected, but normally there should not
+be any cycles, hence we do not care how long it takes to detect them...
+
+We record the maximum allowed expansion depth in a variable and check it
+whenever a new level of expansion is entered.
+
+  #<Global v...#>=
+    my CardinalType $maximum_expansion_depth;
+
+
+# The function |expand_module| returns FALSE if there is any cycle, so finally a
+|fatal_error| can be produced.
+
+  #<Subroutines#>=
+    sub expand_module {
+      my StringType $module_name=shift;
+      my CardinalType $stack_depth=shift;
+
+      my BooleanType $success=$TRUE;
+
+      if ($stack_depth>$maximum_expansion_depth) {
+        $success=$FALSE;
+      } else {
+        my StringType $line;
+        my StringListType @lines_in_module;
+
+        @lines_in_module=RETURN_ARRAY($module_lines{$module_name});
+        for $line (@lines_in_module) {
+	  trace_line();
+          if ($line !~ /^\s*[$WEB_escape_char]</) { ## no expansion necessary
+            push(@output_line_list, $line);
+          } else { ## expansion necessary
+	    my StringListType @matching_modules;
+	    my StringType $module_reference;
+            ## normalize the application
+            $module_reference=$line;
+            $module_reference=~ s/$WEB_escape_char<(.*)$WEB_escape_char>/$1/;
+            $module_reference=normalize_module_name($module_reference);
+            ## find matching module name
+            @matching_modules=lookup_in_module_name_list($module_reference);
+            if (scalar(@matching_modules)!=1) {
+	      no_unique_match_warning($module_reference, @matching_modules);
+            } else { ## expand recursively
+	      my StringType $referenced_module;
+              $referenced_module=shift(@matching_modules);
+	      if ($success) {
+                $success=expand_module($referenced_module, $stack_depth+1);
+	      } #endif
+	    } #endif
+  	  } #endif
+        } #endfor
+      } #endif
+      return $success;
+    }
+
+
+
+# The expansion is just a call of |expand_module| with appropriate error
+handling. Before the |$maximum_expansion_depth| has to be set as the length
+of the |module_name_list|.
+
+  #<Expand unnamed module...#>=
+    {
+      trace_start("expanding");
+      $maximum_expansion_depth=scalar(module_name_list());
+      if (!expand_module($unnamed_module_name, 1)) {
+        fatal_error("circular module definition");
+      } #endif
+      trace_end();
+    }
+
+
+# Finally the output accumulated in |@output_line_list| is directed to
+STDOUT.
+
+  #<Put out lines in...#>=
+    {
+      my StringType $line;
+
+      for $line (@output_line_list) {
+	print $line."\n";
+      } #endfor
+    }
+
+
+#*Debugging output.
+When the program is in debugging mode, the contents of internal tables are
+put out to |STDOUT|. First the list of macro definitions introduced by |#d|
+is printed, second the list of module definition is printed.
+
+  #<Print internal...#>=
+    #<Print macro definitions#>
+    #<Print module definitions#>
+
+
+# The macro definitions are each put out in the same way they are presented
+to the macro processor. For the CPP assumed this means they are printed as
+|#define|s.
+
+  #<Print macro...#>=
+    {      
+      my StringType $line;
+      my CardinalType $counter;
+
+      printf("MACROS:\n========\n");
+      $counter=1;
+      foreach $line (@macro_line_list) {
+        printf("%4d %s\n", $counter, $line);
+        $counter++;
+      } #endforeach
+    }
+
+
+# The module definitions are put out in an arbitrary order. Each definition
+of a module is contained in |%module_lines| indexed by the module name.
+
+  #<Print module...#>=
+    {
+      my StringType $module_name;
+
+      printf("\nDEFINITIONS:\n============\n");
+      foreach $module_name (module_name_list()) {
+        my CardinalType $counter;
+        my StringType $line;
+	my StringListType @module_line_list;
+
+        printf("%s\n", $module_name);
+        @module_line_list=RETURN_ARRAY($module_lines{$module_name});
+        $counter=1;
+        foreach $line (@module_line_list) {
+          printf("%4d %s\n", $counter, $line);
+          $counter++;
+        } #endforeach
+      } #endforeach
+    }
+
+
+#*Index.
+

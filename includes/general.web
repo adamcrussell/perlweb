@@ -1,0 +1,193 @@
+# Similar to other WEB programs, PerlWEB programs can have a canonical
+structure. To enhance portability we use maximum checks (strict...).
+
+  #p
+    use strict;
+    use English;
+    #<Constants definitions#>
+    #<Global variables#>
+    #<Subroutines#>
+    #<Main program#>
+
+
+#*Perl notation quirks. Some concepts in Perl are confusing e.g. the fact
+that all elements in a structure have to be scalar. Hence pointers have to
+be used for complex data structures which must be dereferenced and
+allocated via a special 'new' operator.
+
+To highlight the dereferencing of pointers and the allocation of new space two
+macros are introduced: DEREF and NEWREF. DEREF returns a list associated with a
+pointer and NEWREF constructs a new list with elements copied from another and
+returns a pointer on it.
+
+(As a universal naming scheme throughout the source file we shall use
+capitalized names for special macros and lowercase names for macros which fit
+in the PERL language quite naturally.)
+
+  #d DEREF(ptr)=@{ ptr }
+  #d NEWREF(list)=[ list ]
+
+
+# Sometimes the result type of a hash table is an array reference. When a
+key is used, where no entry is in the table, the empty array shall be
+returned (instead of an undefined value), otherwise the reference should be
+expanded into the array stored. In those situations the macro
+|RETURN_ARRAY| is used which encapsulates this mechanism.
+
+  #d RETURN_ARRAY(hash_elem)=(exists(hash_elem) 
+				? DEREF(hash_elem)
+				: ())
+
+
+#*Notations. Some special WEB notations for PERL constructs are introduced
+here.
+
+
+# When some variable is a constant it can either be defined as a PerlWEB macro
+or tagged with |const| instead of |my|. There is currently no checking for
+constants (e.g. nobody will complain if they are assigned to), hence |const| is
+purely for documentation.
+
+  #d const=my
+
+
+# For special cases we need a name for a noop operation which does nothing.
+Perl would allow an empty statement but some descriptive name is helpful.
+
+  #d do_nothing=
+
+
+# Some loops have only one exit in the middle. The perl |do| is
+syntactically not appropriate, hence we use a new keyword for that...
+
+  #d loop=while ($TRUE)
+
+
+# Case statements have a complicated syntax in PERL. A more C style syntax
+is
+<PRE>
+  SWITCH (name) {
+    CASE(x) { statements for case x; ENDCASE; }
+    CASE(y) { statements for case y; ENDCASE; }
+  }
+</PRE>
+
+This is done via the following macros:
+
+  #d SWITCH       = switch: for
+  #d CASE(x)      = ;(x) && do
+  #d ENDCASE      = last switch
+  #d DEFAULT	  = ;(/.*/) && do
+
+
+# The first index in an array is called |FIRST_INDEX|.
+
+  #d FIRST_INDEX = $[
+
+
+#*Types. To enhance the documentation, type names are introduced as macros
+with an empty expansion. Hence they can be used in |my| declarations.
+
+  #d IntegerType =
+  #d CardinalType =
+  #d CharType =
+  #d StringType =
+
+
+# There are numerous container types for strings.
+ - |StringListType| is a sequential array of strings.
+ - |StringMapType| is a function from strings to strings.
+ - |StringSetType| is a hash, where one can find whether a given string is
+   in a set or not.
+
+  #d StringListType =
+  #d StringMapType =
+  #d StringSetType =
+
+
+# Lists of pointers are also used.
+
+  #d ReferenceListType =
+
+
+# Perl has no provision for Booleans. At least two constants are defined
+and a type name with no expansion.
+
+  #d BooleanType =
+  #<Constants de...#>=
+    const BooleanType $TRUE=1;
+    const BooleanType $FALSE=0;
+
+
+#*Error Handling. There are just two functions for error handling:
+|fatal_error| and |warning|. The first one writes out a message and aborts,
+the second one just gives a message and continues.
+
+  #<Subroutines#>=
+    sub fatal_error {
+      my StringType $message=shift;
+
+      die("$message\n");
+    }
+
+    sub warning {
+      my StringType $message=shift;
+
+      warn("$message\n");
+    }
+
+
+#*Tracing. Tracing informs the user that the program is still alive. For
+each line and every pass some information is put out to the screen.
+
+- A pass starts tracing by calling |trace_start| with some descriptive text
+  for this pass as parameter. An optional parameter is the delta after
+  which a new trace information is put out.
+- For each line processed |trace_line| is called. For performance reasons
+  there will only be output for some lines (e.g. every n-th line). The
+  value of n is given as an optional parameter of |trace_start|.
+  An optional parameter of |trace_line| sets the |trace_line_counter| to
+  a new value and forces the printout.
+- Finally as a pass ends it calls |trace_end|.
+
+  #d BACKSPACES="\x8\x8\x8\x8\x8\x8"
+
+  #<Subroutines#>=
+    sub trace_start {
+      my StringType $name=shift;
+      my CardinalType $delta=shift;
+
+      print STDERR $name.":       ";
+      $trace_delta = (!defined($delta) ? STANDARD_TRACE_DELTA
+			: ( $delta<=0 ? 1 : $delta));
+      $trace_line_counter=0;
+    }
+
+    sub trace_line {
+      my CardinalType $new_counter_value=shift;
+
+      if (defined($new_counter_value)) {
+	$trace_line_counter=$new_counter_value;
+      } else {
+	$trace_line_counter++;
+      }
+      if ($trace_line_counter % $trace_delta == 0 ||
+	  defined($new_counter_value)) {
+	printf STDERR BACKSPACES."%6d", $trace_line_counter;
+      }
+    }
+
+    sub trace_end {
+      printf STDERR BACKSPACES."%6d\n", $trace_line_counter;
+    }
+
+
+# Some global variable stores the current number of lines of this pass
+and the delta where a new information is put out. |STANDARD_TRACE_DELTA| is
+the default delta when no value is given by |trace_start|.
+
+  #d STANDARD_TRACE_DELTA = 100
+
+  #<Global v...#>=
+    my CardinalType $trace_line_counter;
+    my CardinalType $trace_delta;
